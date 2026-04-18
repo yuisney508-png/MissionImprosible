@@ -1,0 +1,535 @@
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { AppState } from '../../shared/types'
+import { RATING_LABELS, RATING_COLORS } from '../constants/ratings'
+import { CHALLENGES } from '../constants/challenges'
+import { playAudio, playAudioTimed, normalizeVolume } from '../utils/audio'
+
+
+function toLocalFile(absPath: string | null): string | null {
+  if (!absPath) return null
+  const normalized = absPath.replace(/\\/g, '/')
+  const encoded = normalized.split('/').map((seg, i) =>
+    i === 0 && /^[A-Za-z]:$/.test(seg) ? seg : encodeURIComponent(seg)
+  ).join('/')
+  return `localfile:///${encoded}`
+}
+
+function toVideoSrc(absPath: string | null): string | null {
+  if (!absPath) return null
+  const normalized = absPath.replace(/\\/g, '/')
+  const encoded = normalized.split('/').map((seg, i) =>
+    i === 0 && /^[A-Za-z]:$/.test(seg) ? seg : encodeURIComponent(seg)
+  ).join('/')
+  return `file:///${encoded}`
+}
+
+
+export function ProjectionApp() {
+  const [state, setState] = useState<AppState | null>(null)
+  const [announcement, setAnnouncement] = useState<string | null>(null)
+  const [missionAnnouncement, setMissionAnnouncement] = useState<string | null>(null)
+  const [missionAnnouncingOut, setMissionAnnouncingOut] = useState(false)
+  const [scoreFlash, setScoreFlash] = useState<Record<string, number>>({})
+  const prevScoresRef = useRef<Record<string, number>>({})
+  const [elimShake, setElimShake] = useState<Record<string, number>>({})
+  const prevEliminatedRef = useRef<Record<string, boolean>>({})
+  const [missionExiting, setMissionExiting] = useState(false)
+  const lastMissionRef = useRef<NonNullable<AppState['missionView']> | null>(null)
+  const volumeRef = useRef<number>(100)
+  const [activeRatings, setActiveRatings] = useState<Record<string, string> | null>(null)
+  const [ratingsExiting, setRatingsExiting] = useState(false)
+  const [rouletteVisible, setRouletteVisible] = useState(false)
+  const [rouletteWinner, setRouletteWinner] = useState<number | null>(null)
+  const [rouletteRevealed, setRouletteRevealed] = useState(false)
+  const rouletteCanvasRef = useRef<HTMLCanvasElement>(null)
+  const rouletteAnimRef = useRef<number>(0)
+  const rouletteTargetRef = useRef<number>(0)
+  const rouletteAudioCtxRef = useRef<AudioContext | null>(null)
+  const roulettePrevSegRef = useRef<number>(-1)
+  const missionSfxMapRef = useRef<Record<string, string>>({})
+  const challengeSfxMapRef = useRef<Record<string, string>>({})
+  const challengeNamesRef = useRef<string[]>(CHALLENGES)
+  const rouletteNamesRef = useRef<string[]>([])
+  const soundObjetivoRef = useRef<string | null>(null)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [curtainMounted, setCurtainMounted] = useState(true)
+  const [curtainVisible, setCurtainVisible] = useState(true)
+  const prevCurtainRef = useRef<boolean>(true)
+  const prevCinematicRef = useRef<string | null | undefined>(null)
+  const curtainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!state) return
+    const curr = state.curtain ?? false
+    const prev = prevCurtainRef.current
+    const cinemaJustEnded = !!prevCinematicRef.current && !state.activeCinematic
+    prevCurtainRef.current = curr
+    prevCinematicRef.current = state.activeCinematic
+    if (curr === prev) return
+    if (curr) {
+      if (curtainTimerRef.current) clearTimeout(curtainTimerRef.current)
+      setCurtainMounted(true)
+      if (cinemaJustEnded) {
+        setCurtainVisible(true)
+      } else {
+        requestAnimationFrame(() => requestAnimationFrame(() => setCurtainVisible(true)))
+      }
+    } else {
+      setCurtainVisible(false)
+      curtainTimerRef.current = setTimeout(() => setCurtainMounted(false), 600)
+    }
+  }, [state?.curtain, state?.activeCinematic])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onStateUpdate((s) => {
+      setState(s)
+      volumeRef.current = s.volume ?? 100
+    })
+    window.electronAPI.getState()
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    ;window.electronAPI.getMissions().then((missions: { name: string; audioPath: string | null }[]) => {
+      const map: Record<string, string> = {}
+      for (const m of missions) {
+        if (m.audioPath) map[m.name] = toLocalFile(m.audioPath)!
+      }
+      missionSfxMapRef.current = map
+    })
+    ;window.electronAPI.getChallenges().then((challenges: { name: string; audioPath: string | null }[]) => {
+      const sfx: Record<string, string> = {}
+      const names: string[] = []
+      for (const c of challenges) {
+        names.push(c.name)
+        if (c.audioPath) sfx[c.name] = toLocalFile(c.audioPath)!
+      }
+      challengeSfxMapRef.current = sfx
+      challengeNamesRef.current = names
+    })
+    ;window.electronAPI.getSounds().then((sounds: Record<string, string | null>) => {
+      soundObjetivoRef.current = toLocalFile(sounds.objetivo ?? null)
+    })
+    ;window.electronAPI.getLogoPath().then((p: string | null) => {
+      setLogoUrl(toLocalFile(p))
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!state?.logoVersion) return
+    ;window.electronAPI.getLogoPath().then((p: string | null) => {
+      setLogoUrl(p ? toLocalFile(p) + '?v=' + state.logoVersion : null)
+    })
+  }, [state?.logoVersion])
+
+  useEffect(() => {
+    if (!state) return
+    const prevElim = prevEliminatedRef.current
+    const shakeUpdates: Record<string, number> = {}
+    for (const p of state.participants) {
+      if (!prevElim[p.id] && p.eliminated) {
+        shakeUpdates[p.id] = (elimShake[p.id] ?? 0) + 1
+      }
+      prevElim[p.id] = !!p.eliminated
+    }
+    if (Object.keys(shakeUpdates).length > 0) {
+      setElimShake(f => ({ ...f, ...shakeUpdates }))
+    }
+  }, [state?.participants])
+
+  useEffect(() => {
+    if (!state) return
+    const prev = prevScoresRef.current
+    const updates: Record<string, number> = {}
+    for (const p of state.participants) {
+      if (prev[p.id] !== undefined && prev[p.id] !== p.score) {
+        updates[p.id] = (scoreFlash[p.id] ?? 0) + 1
+      }
+      prev[p.id] = p.score
+    }
+    if (Object.keys(updates).length > 0) {
+      setScoreFlash(f => ({ ...f, ...updates }))
+    }
+  }, [state?.participants])
+
+  useEffect(() => {
+    if (!state) return
+    const mv = state.missionView
+    if (mv?.active) {
+      lastMissionRef.current = mv
+      setMissionExiting(false)
+    } else if (lastMissionRef.current) {
+      setMissionExiting(true)
+      setTimeout(() => {
+        setMissionExiting(false)
+        lastMissionRef.current = null
+      }, 900)
+    }
+  }, [state?.missionView?.active])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onObjectiveAnnounce((name) => {
+      setAnnouncement(name)
+      if (soundObjetivoRef.current) playAudio(soundObjetivoRef.current, volumeRef.current)
+      setTimeout(() => setAnnouncement(null), 5000)
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onShowRatings((r) => {
+      setRatingsExiting(false)
+      setActiveRatings(r)
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onClearRatings(() => {
+      setRatingsExiting(true)
+      setTimeout(() => { setActiveRatings(null); setRatingsExiting(false) }, 600)
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onMissionAnnounce((name) => {
+      setMissionAnnouncement(name)
+      setMissionAnnouncingOut(false)
+      const sfxUrl = missionSfxMapRef.current[name]
+      if (sfxUrl) {
+        playAudioTimed(sfxUrl, volumeRef.current, (duration) => {
+          const safeDuration = (isFinite(duration) && duration > 500) ? duration : 5000
+          const exitStart = Math.max(safeDuration - 600, 0)
+          setTimeout(() => setMissionAnnouncingOut(true), exitStart)
+          setTimeout(() => { setMissionAnnouncement(null); setMissionAnnouncingOut(false) }, safeDuration)
+        })
+      } else {
+        setTimeout(() => setMissionAnnouncingOut(true), 4400)
+        setTimeout(() => { setMissionAnnouncement(null); setMissionAnnouncingOut(false) }, 5000)
+      }
+    })
+    return unsub
+  }, [])
+
+  const drawWheel = useCallback((angle: number, highlightWinner: number | null) => {
+    const canvas = rouletteCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')!
+    const W = canvas.width, H = canvas.height
+    const cx = W / 2, cy = H / 2
+    const R = Math.min(W, H) * 0.42
+    const names = rouletteNamesRef.current
+    const n = names.length
+    const slice = (2 * Math.PI) / n
+    const colors = ['#f97316','#ea580c','#c2410c','#9a3412','#7c2d12','#fb923c','#ea580c','#c2410c','#9a3412']
+
+    ctx.clearRect(0, 0, W, H)
+
+    for (let i = 0; i < n; i++) {
+      const start = angle + i * slice
+      const end = start + slice
+      const isWinner = highlightWinner !== null && i === highlightWinner
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.arc(cx, cy, R, start, end)
+      ctx.closePath()
+      ctx.fillStyle = isWinner ? '#fff' : colors[i % colors.length]
+      ctx.fill()
+      ctx.strokeStyle = '#111'
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // Text: smaller, pushed toward rim, centered in segment
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.rotate(start + slice / 2)
+      ctx.textAlign = 'right'
+      ctx.fillStyle = isWinner ? '#f97316' : '#fff'
+      ctx.font = `bold ${Math.round(R * 0.065)}px 'Arial Black', Arial`
+      ctx.fillText(names[i], R * 0.96, Math.round(R * 0.025))
+      ctx.restore()
+    }
+
+    // Center circle
+    ctx.beginPath()
+    ctx.arc(cx, cy, R * 0.1, 0, 2 * Math.PI)
+    ctx.fillStyle = '#111'
+    ctx.fill()
+    ctx.strokeStyle = '#f97316'
+    ctx.lineWidth = 3
+    ctx.stroke()
+
+    // Pointer at top — tip points down into the wheel
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - R - 8)
+    ctx.lineTo(cx - 16, cy - R - 38)
+    ctx.lineTo(cx + 16, cy - R - 38)
+    ctx.closePath()
+    ctx.fillStyle = '#f97316'
+    ctx.fill()
+  }, [])
+
+  // Start animation after canvas mounts (rouletteVisible triggers render first)
+  useEffect(() => {
+    if (!rouletteVisible) return
+    cancelAnimationFrame(rouletteAnimRef.current)
+    roulettePrevSegRef.current = -1
+
+    const winnerIndex = rouletteTargetRef.current
+    const n = rouletteNamesRef.current.length
+    const slice = (2 * Math.PI) / n
+    const targetAngle = -Math.PI / 2 - (winnerIndex * slice + slice / 2)
+
+    if (!rouletteAudioCtxRef.current) {
+      rouletteAudioCtxRef.current = new AudioContext()
+    }
+    const audioCtx = rouletteAudioCtxRef.current
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+
+    const freqBase = state?.rouletteTickBase ?? 180
+    const freqRange = state?.rouletteTickRange ?? 520
+
+    const playTick = (speed: number) => {
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      osc.connect(gain)
+      gain.connect(audioCtx.destination)
+      osc.frequency.value = freqBase + speed * freqRange
+      osc.type = 'triangle'
+      const vol = Math.min(0.35, 0.1 + speed * 0.25) * normalizeVolume(volumeRef.current)
+      gain.gain.setValueAtTime(vol, audioCtx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.045)
+      osc.start(audioCtx.currentTime)
+      osc.stop(audioCtx.currentTime + 0.045)
+    }
+
+    const totalAngle = 8 * 2 * Math.PI + targetAngle
+    const duration = 5500
+    const startTime = performance.now()
+
+    const animate = (now: number) => {
+      const t = Math.min((now - startTime) / duration, 1)
+      const eased = 1 - Math.pow(1 - t, 4)
+      const currentAngle = totalAngle * eased
+      const rawSeg = Math.floor((-Math.PI / 2 - currentAngle) / slice)
+      const seg = ((rawSeg % n) + n) % n
+      if (seg !== roulettePrevSegRef.current) {
+        roulettePrevSegRef.current = seg
+        playTick(1 - eased)
+      }
+      drawWheel(currentAngle, null)
+      if (t < 1) {
+        rouletteAnimRef.current = requestAnimationFrame(animate)
+      } else {
+        drawWheel(totalAngle, winnerIndex)
+        setRouletteWinner(winnerIndex)
+        setTimeout(() => {
+          setRouletteRevealed(true)
+          const sfxUrl = challengeSfxMapRef.current[rouletteNamesRef.current[winnerIndex]]
+          if (sfxUrl) {
+            playAudioTimed(sfxUrl, volumeRef.current, (dur) => {
+              const safeDur = (isFinite(dur) && dur > 500) ? dur : 5000
+              setTimeout(() => { setRouletteVisible(false); setRouletteWinner(null); setRouletteRevealed(false) }, safeDur)
+            })
+          } else {
+            setTimeout(() => { setRouletteVisible(false); setRouletteWinner(null); setRouletteRevealed(false) }, 5000)
+          }
+        }, 2000)
+      }
+    }
+    rouletteAnimRef.current = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(rouletteAnimRef.current)
+  }, [rouletteVisible, drawWheel])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onRouletteStart((winnerIndex: number, challenges: string[]) => {
+      cancelAnimationFrame(rouletteAnimRef.current)
+      rouletteNamesRef.current = challenges
+      rouletteTargetRef.current = winnerIndex
+      setRouletteWinner(null)
+      setRouletteRevealed(false)
+      setRouletteVisible(true)
+    })
+    return () => { unsub(); cancelAnimationFrame(rouletteAnimRef.current) }
+  }, [])
+
+  if (!state) return <div className="projection-root" />
+
+  const mv = state.missionView?.active ? state.missionView : (missionExiting ? lastMissionRef.current : null)
+
+  if (mv?.active || missionExiting) {
+    const impro = state.participants.filter(p => mv!.teamImpro.includes(p.id))
+    const sible = state.participants.filter(p => mv!.teamSible.includes(p.id))
+    return (
+      <div className="projection-root mission-view">
+        <div className="mission-header-bar">
+          <h1 className="header-title">
+            <span className="title-mision">MISIÓN </span>
+            <span className="title-impro">IMPRO</span>
+            <span className="title-sible">SIBLE</span>
+          </h1>
+          <div className="mission-name-label">{mv!.name}</div>
+        </div>
+        <div className="mission-arena">
+          <div className={`mission-team mission-team--impro${missionExiting ? ' exiting' : ''}`}>
+            <div className="mission-team-label"><span className="team-label-impro">EQUIPO A</span></div>
+            <div className="mission-team-cards">
+              {impro.map(p => (
+                <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`mission-card${elimShake[p.id] ? ' mission-card--shake' : ''}`}>
+                  <div className="mission-card-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
+                    {p.photoPath
+                      ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
+                      : <div className="photo-placeholder">FOTO</div>}
+                    {activeRatings && activeRatings[p.id] && (
+                      <div className={`rating-badge${ratingsExiting ? ' rating-badge--exiting' : ''}`} style={{ color: RATING_COLORS[activeRatings[p.id]] }}>
+                        {RATING_LABELS[activeRatings[p.id]]}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mission-card-name" style={{ background: p.eliminated ? '#4b5563' : undefined, transition: 'background 0.4s' }}>{p.name}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={`mission-vs${missionExiting ? ' exiting' : ''}`}>VS</div>
+
+          <div className={`mission-team mission-team--sible${missionExiting ? ' exiting' : ''}`}>
+            <div className="mission-team-label"><span className="team-label-sible">EQUIPO B</span></div>
+            <div className="mission-team-cards">
+              {sible.map(p => (
+                <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`mission-card${elimShake[p.id] ? ' mission-card--shake' : ''}`}>
+                  <div className="mission-card-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
+                    {p.photoPath
+                      ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
+                      : <div className="photo-placeholder">FOTO</div>}
+                    {activeRatings && activeRatings[p.id] && (
+                      <div className={`rating-badge${ratingsExiting ? ' rating-badge--exiting' : ''}`} style={{ color: RATING_COLORS[activeRatings[p.id]] }}>
+                        {RATING_LABELS[activeRatings[p.id]]}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mission-card-name" style={{ background: p.eliminated ? '#4b5563' : undefined, transition: 'background 0.4s' }}>{p.name}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="projection-root">
+      <div className="header">
+        <h1 className="header-title">
+          <span className="title-mision">MISIÓN </span>
+          <span className="title-impro">IMPRO</span>
+          <span className="title-sible">SIBLE</span>
+        </h1>
+        <div className="header-logo">
+          {logoUrl && <img key={state.logoVersion ?? 0} src={logoUrl} className="logo-placeholder" />}
+        </div>
+      </div>
+
+
+
+      <div className="participants">
+        {state.participants.slice(0, state.visibleParticipants).map(p => (
+          <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`participant-card${elimShake[p.id] ? ' participant-card--shake' : ''}`}>
+            <div className="participant-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
+              {p.photoPath ? (
+                <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
+              ) : (
+                <div className="photo-placeholder">FOTO</div>
+              )}
+              {activeRatings && activeRatings[p.id] && (
+                <div
+                  className={`rating-badge${ratingsExiting ? ' rating-badge--exiting' : ''}`}
+                  style={{ color: RATING_COLORS[activeRatings[p.id]] }}
+                >
+                  {RATING_LABELS[activeRatings[p.id]]}
+                </div>
+              )}
+            </div>
+            <div className="participant-name" style={{ background: p.eliminated ? '#4b5563' : undefined, transition: 'background 0.4s' }}>{p.name}</div>
+            <div key={scoreFlash[p.id] ?? 0} className="participant-score participant-score--flash">{p.score}</div>
+          </div>
+        ))}
+      </div>
+
+      {announcement && (
+        <div className="obj-announce-overlay" style={{ background: `rgba(0,0,0,${(state.overlayOpacity ?? 80) / 100})` }}>
+          <div className="obj-announce-card">
+            <div className="obj-announce-label">OBJETIVO ALCANZADO</div>
+            <div className="obj-announce-name">{announcement}</div>
+            <div className="obj-announce-corners">
+              <span /><span /><span /><span />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rouletteVisible && !rouletteRevealed && (
+        <div className="roulette-overlay">
+          <div className="roulette-backdrop" />
+          <div className="roulette-content">
+            <div className="roulette-title">DESAFÍO</div>
+            <canvas ref={rouletteCanvasRef} width={900} height={900} className="roulette-canvas" />
+          </div>
+        </div>
+      )}
+
+      {rouletteRevealed && rouletteWinner !== null && (
+        <div className="roulette-overlay">
+          <div className="roulette-backdrop" />
+          <div className="roulette-reveal">
+            <div className="roulette-reveal-label">DESAFÍO SELECCIONADO</div>
+            <div className="roulette-reveal-name">{rouletteNamesRef.current[rouletteWinner].toUpperCase()}</div>
+          </div>
+        </div>
+      )}
+
+      {state.activeCinematic && (
+        <div className="cinematic-overlay">
+          <video
+            key={state.activeCinematic}
+            src={toVideoSrc(state.activeCinematic) ?? undefined}
+            className="cinematic-video"
+            autoPlay
+            onEnded={() => window.electronAPI.updateAppState({ activeCinematic: null, activeCinematicName: null, curtain: true })}
+          />
+
+        </div>
+      )}
+
+      {curtainMounted && (
+        <div className={`curtain-overlay${curtainVisible ? '' : ' curtain-fade-out'}`}>
+          {logoUrl && <img src={logoUrl} className="curtain-logo" alt="A.I.S." />}
+        </div>
+      )}
+
+      {missionAnnouncement && (
+        missionAnnouncement === 'Misión Improsible' ? (
+          <div key="final" className={`mission-final-overlay${missionAnnouncingOut ? ' exiting' : ''}`}>
+            <div className="mission-final-bg" style={{ background: 'rgba(0,0,0,0.95)' }} />
+            <div className="mission-final-content">
+              <div className="mission-final-caption">Misión Final</div>
+              <div className="mission-final-rule" />
+              <div className="mission-final-word mission-final-word--1">MISIÓN</div>
+              <div className="mission-final-word mission-final-word--2">IMPROSIBLE</div>
+              <div className="mission-final-rule mission-final-rule--2" />
+            </div>
+          </div>
+        ) : (
+          <div key={missionAnnouncement} className={`mission-announce-overlay${missionAnnouncingOut ? ' exiting' : ''}`}>
+            <div className="mission-announce-backdrop" style={{ background: `rgba(0,0,0,${(state.overlayOpacity ?? 80) / 100})` }} />
+            <div className="mission-announce-subtitle">Siguiente misión</div>
+            <div className="mission-announce-name">{missionAnnouncement.toUpperCase()}</div>
+          </div>
+        )
+      )}
+    </div>
+  )
+}

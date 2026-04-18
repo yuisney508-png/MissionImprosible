@@ -1,0 +1,62 @@
+{
+  "name": "screenprojection",
+  "version": "1.0.7",
+  "description": "",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build:main": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts",
+    "build:control": "vite build --config vite.control.config.ts",
+    "build:projection": "vite build --config vite.projection.config.ts",
+    "build": "npm run build:main && npm run build:control && npm run build:projection",
+    "start": "npm run build && electron .",
+    "package": "npm run build && electron-builder --win",
+    "generate-icon": "node scripts/generate-icon.mjs",
+    "package:portable": "npm run build && electron-builder --win portable"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1",
+    "jimp": "^1.6.1",
+    "lucide-react": "^1.8.0",
+    "png-to-ico": "^3.0.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8"
+  },
+  "build": {
+    "appId": "com.misionimprosible.app",
+    "productName": "Misión Improsible",
+    "files": [
+      "dist/main/**/*",
+      "dist/renderer/**/*"
+    ],
+    "extraResources": [
+      { "from": "src/data", "to": "data" }
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.ico",
+      "executableName": "MisionImprosible"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "portable": {
+      "unpackDirName": "MisionImprosible",
+      "requestExecutionLevel": "user"
+    }
+  },
+  "dependencies": {}
+}

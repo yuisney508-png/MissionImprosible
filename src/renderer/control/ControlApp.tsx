@@ -1,0 +1,1350 @@
+import { useEffect, useState, useCallback } from 'react'
+import { Monitor, Play, RotateCcw, Target, Plus, Trash2 } from 'lucide-react'
+import { AppState, Participant, MissionData, ObjectiveData, CinematicData, CinematicAudioData } from '../../shared/types'
+import { ProjectionPreview } from './ProjectionPreview'
+import { playAudio, getAudioDuration } from '../utils/audio'
+import { RatingKey, RATING_OPTIONS } from '../constants/ratings'
+import { TabId, TABS } from '../constants/tabs'
+
+function toLocalFile(absPath: string | null): string | null {
+  if (!absPath) return null
+  const normalized = absPath.replace(/\\/g, '/')
+  const encoded = normalized.split('/').map((seg, i) =>
+    i === 0 && /^[A-Za-z]:$/.test(seg) ? seg : encodeURIComponent(seg)
+  ).join('/')
+  return `localfile:///${encoded}`
+}
+
+
+type Display = { id: number; label: string; bounds: { x: number; y: number; width: number; height: number }; isPrimary: boolean }
+
+export function ControlApp() {
+  const [state, setState] = useState<AppState | null>(null)
+  const [displays, setDisplays] = useState<Display[]>([])
+  const [selectedDisplay, setSelectedDisplay] = useState<number | null>(null)
+  const [activeTab, setActiveTab] = useState<TabId>('participantes')
+
+  // Dynamic data from JSON
+  const [missionData, setMissionData] = useState<MissionData[]>([])
+  const [objectiveData, setObjectiveData] = useState<ObjectiveData[]>([])
+  const [challengeData, setChallengeData] = useState<{ name: string; audioPath: string | null }[]>([])
+  const [enabledChallenges, setEnabledChallenges] = useState<Set<string>>(new Set())
+  const [addChallengeModal, setAddChallengeModal] = useState(false)
+  const [newChallengeName, setNewChallengeName] = useState('')
+  const [newChallengeAudio, setNewChallengeAudio] = useState<string | null>(null)
+  const [deleteChallengeConfirm, setDeleteChallengeConfirm] = useState<string | null>(null)
+  const [finalizarConfirm, setFinalizarConfirm] = useState(false)
+  const [soundDisparo, setSoundDisparo] = useState<string | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+
+  // Cinematics
+  const [cinematicData, setCinematicData] = useState<CinematicData[]>([])
+  const [addCinematicModal, setAddCinematicModal] = useState(false)
+  const [newCinematicName, setNewCinematicName] = useState('')
+  const [newCinematicVideo, setNewCinematicVideo] = useState<string | null>(null)
+  const [deleteCinematicConfirm, setDeleteCinematicConfirm] = useState<CinematicData | null>(null)
+  const [playCinematicConfirm, setPlayCinematicConfirm] = useState<CinematicData | null>(null)
+
+  // Cinematic audios
+  const [cinematicAudioData, setCinematicAudioData] = useState<CinematicAudioData[]>([])
+  const [addCinematicAudioModal, setAddCinematicAudioModal] = useState(false)
+  const [newCinematicAudioName, setNewCinematicAudioName] = useState('')
+  const [newCinematicAudioPath, setNewCinematicAudioPath] = useState<string | null>(null)
+  const [deleteCinematicAudioConfirm, setDeleteCinematicAudioConfirm] = useState<CinematicAudioData | null>(null)
+  const [playCinematicAudioConfirm, setPlayCinematicAudioConfirm] = useState<CinematicAudioData | null>(null)
+
+  // Objective modals
+  const [modalObjective, setModalObjective] = useState<ObjectiveData | null>(null)
+  const [announceModal, setAnnounceModal] = useState<{ objective: ObjectiveData; participantId: string } | null>(null)
+  const [addObjectiveModal, setAddObjectiveModal] = useState(false)
+  const [newObjName, setNewObjName] = useState('')
+  const [newObjPoints, setNewObjPoints] = useState(5)
+  const [newObjDesc, setNewObjDesc] = useState('')
+  const [newObjAudio, setNewObjAudio] = useState<string | null>(null)
+  const [deleteObjectiveConfirm, setDeleteObjectiveConfirm] = useState<ObjectiveData | null>(null)
+
+  // Mission modals
+  const [addMissionModal, setAddMissionModal] = useState(false)
+  const [newMissionName, setNewMissionName] = useState('')
+  const [newMissionAudio, setNewMissionAudio] = useState<string | null>(null)
+  const [deleteMissionConfirm, setDeleteMissionConfirm] = useState<MissionData | null>(null)
+
+  // Score / animation
+  const [pendingScores, setPendingScores] = useState<Record<string, number>>({})
+  const [scoreFlash, setScoreFlash] = useState<Record<string, number>>({})
+  const [scoreInputValues, setScoreInputValues] = useState<Record<string, string>>({})
+  const [executedObjectives, setExecutedObjectives] = useState<Set<number>>(new Set())
+  const [executedMissions, setExecutedMissions] = useState<Set<number>>(new Set())
+  const [improsibleExecuted, setImprosibleExecuted] = useState(false)
+  const [isAnimating, setIsAnimating] = useState(false)
+  const [animatingKey, setAnimatingKey] = useState<string | null>(null)
+  const [shakingIds, setShakingIds] = useState<Set<string>>(new Set())
+  const [ratings, setRatings] = useState<Record<string, RatingKey>>({})
+  const [rouletteConfirm, setRouletteConfirm] = useState(false)
+
+  // Mission start modal
+  const [missionModal, setMissionModal] = useState(false)
+  const [missionName, setMissionName] = useState('')
+  const [missionAssignments, setMissionAssignments] = useState<Record<string, 'impro' | 'sible' | 'none'>>({})
+
+  const missionCanStart = state
+    ? state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'impro') &&
+      state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'sible')
+    : false
+
+  // Regular missions (exclude "Misión Improsible")
+  const regularMissions = missionData.filter(m => m.name !== 'Misión Improsible')
+
+  useEffect(() => {
+    window.electronAPI.getMissions().then(missions => {
+      setMissionData(missions)
+      const first = missions.find(m => m.name !== 'Misión Improsible')
+      if (first) setMissionName(first.name)
+    })
+    window.electronAPI.getObjectives().then(setObjectiveData)
+    window.electronAPI.getChallenges().then(ch => {
+      setChallengeData(ch)
+      setEnabledChallenges(new Set(ch.map(c => c.name)))
+    })
+    window.electronAPI.getSounds().then(sounds => setSoundDisparo(toLocalFile(sounds.disparo ?? null)))
+    window.electronAPI.getCinematics().then(setCinematicData)
+    window.electronAPI.getCinematicAudios().then(setCinematicAudioData)
+    window.electronAPI.getLogoPath().then(p => setLogoPreview(toLocalFile(p)))
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onStateUpdate(setState)
+    window.electronAPI.getState()
+    window.electronAPI.listDisplays().then(d => {
+      setDisplays(d)
+      const nonPrimary = d.find(x => !x.isPrimary)
+      if (nonPrimary) setSelectedDisplay(nonPrimary.id)
+      else if (d.length > 0) setSelectedDisplay(d[0].id)
+    })
+    return unsub
+  }, [])
+
+  const playGunshot = () => {
+    if (soundDisparo) playAudio(soundDisparo, state?.volume ?? 100)
+  }
+
+  const handleEliminate = (id: string) => {
+    const p = state!.participants.find(p => p.id === id)!
+    window.electronAPI.updateParticipant({ ...p, eliminated: true, score: p.score - 2 })
+    playGunshot()
+    setShakingIds(prev => new Set(prev).add(id))
+    setTimeout(() => setShakingIds(prev => { const s = new Set(prev); s.delete(id); return s }), 600)
+  }
+
+  const handleRestore = (id: string) => {
+    window.electronAPI.updateParticipant({ ...state!.participants.find(p => p.id === id)!, eliminated: false })
+  }
+
+  const blockFor = (ms: number, key: string) => {
+    setIsAnimating(true)
+    setAnimatingKey(key)
+    setTimeout(() => { setIsAnimating(false); setAnimatingKey(null) }, ms)
+  }
+
+  const fireMission = (name: string, key: string) => {
+    if (isAnimating) return
+    const sfxUrl = toLocalFile(missionData.find(m => m.name === name)?.audioPath ?? null)
+    if (sfxUrl) {
+      getAudioDuration(sfxUrl, (duration) => blockFor(duration, key))
+    } else {
+      blockFor(4000, key)
+    }
+    window.electronAPI.announceMission(name)
+  }
+
+  const handlePendingDelta = (id: string, delta: number) =>
+    setPendingScores(prev => ({ ...prev, [id]: (prev[id] ?? 0) + delta }))
+
+  const handleCommitScore = (id: string) => {
+    const pending = pendingScores[id] ?? 0
+    if (pending === 0) return
+    window.electronAPI.updateScore(id, pending)
+    setPendingScores(prev => ({ ...prev, [id]: 0 }))
+    setScoreFlash(prev => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
+  }
+
+  const handleScoreInput = (id: string, value: string) => {
+    setScoreInputValues(prev => ({ ...prev, [id]: value }))
+    const n = value === '' || value === '-' ? null : parseInt(value, 10)
+    if (n !== null && !isNaN(n)) {
+      window.electronAPI.setScore(id, n)
+      setScoreFlash(prev => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
+    }
+  }
+
+  const handleScoreBlur = (id: string, score: number) => {
+    const raw = scoreInputValues[id] ?? String(score)
+    const isEmpty = raw === '' || raw === '-'
+    if (isEmpty) {
+      window.electronAPI.setScore(id, 0)
+      setScoreFlash(prev => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
+      setScoreInputValues(prev => ({ ...prev, [id]: '0' }))
+    } else {
+      setScoreInputValues(prev => ({ ...prev, [id]: String(score) }))
+    }
+  }
+
+  const handleNameChange = useCallback((p: Participant, name: string) => {
+    window.electronAPI.updateParticipant({ ...p, name })
+  }, [])
+
+  const handleSelectPhoto = async (id: string) => { await window.electronAPI.selectPhoto(id) }
+  const handleProjectDisplay = () => { if (selectedDisplay !== null) window.electronAPI.setDisplay(selectedDisplay) }
+
+  // --- Mission CRUD ---
+  const handleAddMission = async () => {
+    if (!newMissionName.trim()) return
+    const newId = missionData.length > 0 ? Math.max(...missionData.map(m => m.id)) + 1 : 1
+    const newMission: MissionData = { id: newId, name: newMissionName.trim(), audioPath: newMissionAudio }
+    const updated = [...missionData, newMission]
+    await window.electronAPI.saveMissions(updated)
+    setMissionData(updated)
+    setAddMissionModal(false)
+    setNewMissionName('')
+    setNewMissionAudio(null)
+  }
+
+  const handleDeleteMission = async (mission: MissionData) => {
+    const updated = missionData.filter(m => m.id !== mission.id)
+    await window.electronAPI.saveMissions(updated)
+    setMissionData(updated)
+    setDeleteMissionConfirm(null)
+  }
+
+  // --- Objective CRUD ---
+  const handleAddObjective = async () => {
+    if (!newObjName.trim() || !newObjDesc.trim()) return
+    const newId = objectiveData.length > 0 ? Math.max(...objectiveData.map(o => o.id)) + 1 : 1
+    const newObj: ObjectiveData = {
+      id: newId,
+      name: newObjName.trim(),
+      points: newObjPoints,
+      description: newObjDesc.trim(),
+      audioPath: newObjAudio,
+    }
+    const updated = [...objectiveData, newObj]
+    await window.electronAPI.saveObjectives(updated)
+    setObjectiveData(updated)
+    setAddObjectiveModal(false)
+    setNewObjName('')
+    setNewObjPoints(5)
+    setNewObjDesc('')
+    setNewObjAudio(null)
+  }
+
+  const handleDeleteObjective = async (obj: ObjectiveData) => {
+    const updated = objectiveData.filter(o => o.id !== obj.id)
+    await window.electronAPI.saveObjectives(updated)
+    setObjectiveData(updated)
+    setDeleteObjectiveConfirm(null)
+  }
+
+  // --- Cinematic Audio CRUD ---
+  const handleAddCinematicAudio = async () => {
+    if (!newCinematicAudioName.trim() || !newCinematicAudioPath) return
+    const newEntry: CinematicAudioData = { name: newCinematicAudioName.trim(), audioPath: newCinematicAudioPath }
+    const updated = [...cinematicAudioData, newEntry]
+    await window.electronAPI.saveCinematicAudios(updated)
+    setCinematicAudioData(updated)
+    setAddCinematicAudioModal(false)
+    setNewCinematicAudioName('')
+    setNewCinematicAudioPath(null)
+  }
+
+  const handleDeleteCinematicAudio = async (entry: CinematicAudioData) => {
+    const updated = cinematicAudioData.filter(a => a.name !== entry.name)
+    await window.electronAPI.saveCinematicAudios(updated)
+    setCinematicAudioData(updated)
+    setDeleteCinematicAudioConfirm(null)
+  }
+
+  // --- Cinematic CRUD ---
+  const handleAddCinematic = async () => {
+    if (!newCinematicName.trim() || !newCinematicVideo) return
+    const newCinematic: CinematicData = { name: newCinematicName.trim(), videoPath: newCinematicVideo }
+    const updated = [...cinematicData, newCinematic]
+    await window.electronAPI.saveCinematics(updated)
+    setCinematicData(updated)
+    setAddCinematicModal(false)
+    setNewCinematicName('')
+    setNewCinematicVideo(null)
+  }
+
+  const handleDeleteCinematic = async (cinematic: CinematicData) => {
+    const updated = cinematicData.filter(c => c.name !== cinematic.name)
+    await window.electronAPI.saveCinematics(updated)
+    setCinematicData(updated)
+    setDeleteCinematicConfirm(null)
+  }
+
+  // --- Challenge CRUD ---
+  const handleAddChallenge = async () => {
+    if (!newChallengeName.trim()) return
+    const newChallenge = { name: newChallengeName.trim(), audioPath: newChallengeAudio }
+    const updated = [...challengeData, newChallenge]
+    await window.electronAPI.saveChallenges(updated)
+    setChallengeData(updated)
+    setEnabledChallenges(prev => new Set([...prev, newChallenge.name]))
+    setAddChallengeModal(false)
+    setNewChallengeName('')
+    setNewChallengeAudio(null)
+  }
+
+  const handleDeleteChallenge = async (name: string) => {
+    const updated = challengeData.filter(c => c.name !== name)
+    await window.electronAPI.saveChallenges(updated)
+    setChallengeData(updated)
+    setEnabledChallenges(prev => { const s = new Set(prev); s.delete(name); return s })
+    setDeleteChallengeConfirm(null)
+  }
+
+  if (!state) return <div className="control-root" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>Cargando...</div>
+
+  return (
+    <div className="control-root">
+      {/* Top bar */}
+      <div className="topbar">
+        <h1>MISIÓN IMPROSIBLE — CONTROL</h1>
+        <div className="topbar-spacer" />
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => window.electronAPI.updateAppState({ curtain: true, activeCinematic: null, activeCinematicName: null })}
+          >Cortina</button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => window.electronAPI.updateAppState({ curtain: false, activeCinematic: null, activeCinematicName: null })}
+          >Puntuaciones</button>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={() => setFinalizarConfirm(true)}
+          >Finalizar</button>
+        </div>
+        <div className="display-select" style={{ marginLeft: 12 }}>
+          <Monitor size={14} style={{ color: '#888' }} />
+          <select value={selectedDisplay ?? ''} onChange={e => setSelectedDisplay(Number(e.target.value))}>
+            {displays.map(d => (
+              <option key={d.id} value={d.id}>{d.isPrimary ? '(Principal) ' : ''}{d.label}</option>
+            ))}
+          </select>
+          <button className="btn btn-primary" onClick={handleProjectDisplay}>Proyectar</button>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="main-layout">
+        <div className="participants-panel">
+          <div className="tab-bar">
+            {TABS.map(({ id, label, Icon }) => (
+              <button key={id} className={`tab-btn${activeTab === id ? ' tab-btn--active' : ''}`} onClick={() => setActiveTab(id)}>
+                <Icon size={14} /><span>{label}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="tab-content">
+            {activeTab === 'participantes' && (
+              <div className="participants-list">
+                {state.participants.map((p, idx) => (
+                  <div key={p.id} className={`participant-row${shakingIds.has(p.id) ? ' participant-row--shaking' : ''}`} style={{ opacity: idx < state.visibleParticipants ? 1 : 0.35 }}>
+                    <div className="participant-thumb" onClick={() => handleSelectPhoto(p.id)} title="Click para cargar foto"
+                      style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.3s' }}>
+                      {p.photoPath
+                        ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
+                        : <div className="thumb-placeholder">📷<br />Foto</div>}
+                    </div>
+                    <div className="participant-info">
+                      <input className="participant-name-input" value={p.name} onChange={e => handleNameChange(p, e.target.value)} onFocus={e => e.target.select()} />
+                      <div className="score-controls">
+                        <span key={scoreFlash[p.id] ?? 0} className="score-value score-value--flash">{p.score}</span>
+                        <div className="pending-controls">
+                          <button className="score-btn score-btn-minus" onClick={() => handlePendingDelta(p.id, -1)}>−</button>
+                          <span className={`pending-value${(pendingScores[p.id] ?? 0) !== 0 ? ' pending-value--active' : ''}`}>
+                            {(pendingScores[p.id] ?? 0) > 0 ? '+' : ''}{pendingScores[p.id] ?? 0}
+                          </span>
+                          <button className="score-btn score-btn-plus" onClick={() => handlePendingDelta(p.id, 1)}>+</button>
+                          <button className="btn btn-primary score-commit-btn" onClick={() => handleCommitScore(p.id)}>✓</button>
+                          {(() => {
+                            const rk = ratings[p.id] ?? 'noaplica'
+                            const selectedColor = RATING_OPTIONS.find(o => o.key === rk)!.color
+                            return (
+                              <select
+                                className="rating-select"
+                                value={rk}
+                                style={{ color: selectedColor }}
+                                onChange={e => setRatings(prev => ({ ...prev, [p.id]: e.target.value as RatingKey }))}
+                              >
+                                {RATING_OPTIONS.map(o => (
+                                  <option key={o.key} value={o.key} style={{ color: o.color }}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </select>
+                            )
+                          })()}
+                        </div>
+                        <div className="score-manual">
+                          <span className="score-manual-label">
+                            Puntuación actual
+                            <span className="score-manual-hint" title="Puedes modificar el valor manualmente escribiendo directamente en este campo">?</span>
+                          </span>
+                          <input
+                            className="score-input"
+                            type="text"
+                            inputMode="numeric"
+                            value={scoreInputValues[p.id] ?? String(p.score)}
+                            onChange={e => handleScoreInput(p.id, e.target.value)}
+                            onBlur={() => handleScoreBlur(p.id, p.score)}
+                            onFocus={e => e.target.select()}
+                          />
+                        </div>
+                      </div>
+                      <div className="elim-actions">
+                        <button
+                          className={`elim-btn elim-btn--shoot${p.eliminated ? ' elim-btn--active' : ''}`}
+                          onClick={() => handleEliminate(p.id)}
+                          title="Eliminar participante"
+                        >
+                          <Target size={13} />
+                        </button>
+                        <button
+                          className="elim-btn elim-btn--restore"
+                          onClick={() => handleRestore(p.id)}
+                          disabled={!p.eliminated}
+                          title="Restaurar participante"
+                        >
+                          <RotateCcw size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="rating-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      const toApply = state.participants.filter(p => (ratings[p.id] ?? 'noaplica') !== 'noaplica')
+                      toApply.forEach(p => {
+                        const pts = RATING_OPTIONS.find(o => o.key === ratings[p.id])!.points
+                        window.electronAPI.updateScore(p.id, pts)
+                      })
+                      const payload: Record<string, string> = {}
+                      toApply.forEach(p => { payload[p.id] = ratings[p.id] })
+                      window.electronAPI.showRatings(payload)
+                      setRatings({})
+                    }}
+                  >
+                    Aplicar calificaciones
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      window.electronAPI.clearRatings()
+                      setRatings({})
+                      state.participants.filter(p => p.eliminated).forEach(p =>
+                        window.electronAPI.updateParticipant({ ...p, eliminated: false })
+                      )
+                    }}
+                  >
+                    Limpiar calificaciones
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'configuracion' && (
+              <div className="participants-list">
+                <div className="config-group">
+                  <div className="config-group-title">Audio</div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Volumen</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>
+                        {state.volume}%
+                        <span style={{ color: '#9ca3af', fontWeight: 400, marginLeft: 8 }}>
+                          {state.volume === 0
+                            ? '−∞ dB'
+                            : `${(10 * Math.log10(state.volume / 100)).toFixed(1)} dB`}
+                        </span>
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      className="volume-slider"
+                      min={0}
+                      max={100}
+                      value={state.volume}
+                      onChange={e => window.electronAPI.updateAppState({ volume: Number(e.target.value) })}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>0%</span>
+                      <span>50%</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Beep ruleta — base</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>{state.rouletteTickBase ?? 180} Hz</span>
+                    </div>
+                    <input
+                      type="range"
+                      className="volume-slider"
+                      min={80}
+                      max={1200}
+                      step={10}
+                      value={state.rouletteTickBase ?? 180}
+                      onChange={e => window.electronAPI.updateAppState({ rouletteTickBase: Number(e.target.value) })}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>80 Hz (grave)</span>
+                      <span>1200 Hz (agudo)</span>
+                    </div>
+                  </div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Beep ruleta — rango</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>{state.rouletteTickRange ?? 520} Hz</span>
+                    </div>
+                    <input
+                      type="range"
+                      className="volume-slider"
+                      min={0}
+                      max={1200}
+                      step={10}
+                      value={state.rouletteTickRange ?? 520}
+                      onChange={e => window.electronAPI.updateAppState({ rouletteTickRange: Number(e.target.value) })}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>0 Hz (tono fijo)</span>
+                      <span>1200 Hz (variación máxima)</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="config-group">
+                  <div className="config-group-title">Opacidad de animaciones</div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Opacidad del fondo</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>{state.overlayOpacity}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      className="volume-slider"
+                      min={0}
+                      max={100}
+                      value={state.overlayOpacity}
+                      onChange={e => window.electronAPI.updateAppState({ overlayOpacity: Number(e.target.value) })}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>0% (transparente)</span>
+                      <span>100% (negro)</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="config-group">
+                  <div className="config-group-title">Proyección</div>
+                  <div className="field-row">
+                    <span className="field-label">Jugadores</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button className="score-btn score-btn-minus"
+                        onClick={() => window.electronAPI.updateAppState({ visibleParticipants: Math.max(1, state.visibleParticipants - 1) })}>−</button>
+                      <span style={{ fontSize: 20, fontWeight: 900, color: '#f97316', minWidth: 24, textAlign: 'center' }}>{state.visibleParticipants}</span>
+                      <button className="score-btn score-btn-plus"
+                        onClick={() => window.electronAPI.updateAppState({ visibleParticipants: Math.min(4, state.visibleParticipants + 1) })}>+</button>
+                    </div>
+                  </div>
+                </div>
+                <div className="config-group">
+                  <div className="config-group-title">Logo</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {logoPreview && (
+                      <img
+                        key={state.logoVersion ?? 0}
+                        src={logoPreview}
+                        alt="Logo"
+                        style={{ height: 64, objectFit: 'contain', background: '#000', borderRadius: 4, padding: 4 }}
+                      />
+                    )}
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={async () => {
+                        const p = await window.electronAPI.selectLogo()
+                        if (p) setLogoPreview(toLocalFile(p) + '?v=' + Date.now())
+                      }}
+                    >
+                      Cambiar logo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'objetivos' && (
+              <div className="obj-list">
+                <div className="obj-list-toolbar">
+                  <button className="btn btn-primary btn-sm" onClick={() => setAddObjectiveModal(true)}>
+                    <Plus size={13} /> Nuevo objetivo
+                  </button>
+                </div>
+                <table className="obj-table">
+                  <thead>
+                    <tr>
+                      <th className="obj-th obj-th-num">#</th>
+                      <th className="obj-th obj-th-play"></th>
+                      <th className="obj-th obj-th-name">Nombre</th>
+                      <th className="obj-th obj-th-pts">Pts</th>
+                      <th className="obj-th obj-th-more"></th>
+                      <th className="obj-th obj-th-del"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {objectiveData.map(obj => (
+                      <tr key={obj.id} className="obj-row">
+                        <td className="obj-td obj-td-num">{obj.id}</td>
+                        <td className="obj-td obj-td-play">
+                          <button
+                            className={`obj-play-btn${isAnimating ? ' obj-play-btn--blocked' : executedObjectives.has(obj.id) ? ' obj-play-btn--done' : ''}`}
+                            disabled={isAnimating}
+                            onClick={() => setAnnounceModal({ objective: obj, participantId: state.participants[0]?.id ?? '' })}
+                          ><Play size={10} fill="#fff" color="#fff" /></button>
+                        </td>
+                        <td className="obj-td obj-td-name">
+                          {obj.name}
+                          {animatingKey === `obj-${obj.id}` && <span className="obj-executing-badge">En ejecución</span>}
+                          {executedObjectives.has(obj.id) && animatingKey !== `obj-${obj.id}` && <span className="obj-executed-badge">Ya ejecutado</span>}
+                        </td>
+                        <td className="obj-td obj-td-pts">{obj.points}</td>
+                        <td className="obj-td obj-td-more">
+                          <button className="obj-more-btn" onClick={() => setModalObjective(obj)}>Ver más</button>
+                        </td>
+                        <td className="obj-td obj-td-del">
+                          <button className="obj-del-btn" onClick={() => setDeleteObjectiveConfirm(obj)} title="Eliminar objetivo">
+                            <Trash2 size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {activeTab === 'desafios' && (
+              <div className="obj-list">
+                <div className="obj-list-toolbar" style={{ justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setEnabledChallenges(new Set(challengeData.map(c => c.name)))}
+                    >
+                      Reiniciar
+                    </button>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => setAddChallengeModal(true)}
+                    >
+                      <Plus size={13} /> Nuevo
+                    </button>
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={enabledChallenges.size === 0}
+                    onClick={() => setRouletteConfirm(true)}
+                  >
+                    Iniciar ruleta
+                  </button>
+                </div>
+                <div className="challenge-list">
+                  {challengeData.map(c => (
+                    <div key={c.name} className={`challenge-item${enabledChallenges.has(c.name) ? '' : ' challenge-item--disabled'}`}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          className="challenge-checkbox"
+                          checked={enabledChallenges.has(c.name)}
+                          onChange={e => setEnabledChallenges(prev => {
+                            const s = new Set(prev)
+                            if (e.target.checked) s.add(c.name)
+                            else s.delete(c.name)
+                            return s
+                          })}
+                        />
+                        <span>{c.name}</span>
+                      </label>
+                      <button
+                        className="obj-del-btn"
+                        onClick={() => setDeleteChallengeConfirm(c.name)}
+                        title="Eliminar desafío"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'cinematicas' && (
+              <div className="obj-list">
+                <div style={{ padding: '10px 4px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Cinemáticas</span>
+                  <button className="btn btn-primary btn-sm" onClick={() => setAddCinematicModal(true)}>
+                    <Plus size={13} /> Nueva cinemática
+                  </button>
+                </div>
+                <div className="challenge-list">
+                  {cinematicData.map(c => (
+                    <div key={c.name} className="challenge-item">
+                      <button
+                        className="obj-play-btn"
+                        title="Reproducir"
+                        onClick={() => setPlayCinematicConfirm(c)}
+                      >
+                        <Play size={10} fill="#fff" color="#fff" />
+                      </button>
+                      <span style={{ flex: 1, fontSize: 13 }}>{c.name}</span>
+                      <span style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+                        {c.videoPath ? c.videoPath.split(/[\\/]/).pop() : 'Sin video'}
+                      </span>
+                      <button
+                        className="obj-del-btn"
+                        onClick={() => setDeleteCinematicConfirm(c)}
+                        title="Eliminar cinemática"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {cinematicData.length === 0 && (
+                    <div style={{ color: '#4b5563', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+                      No hay cinemáticas. Agrega una con el botón de arriba.
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Audios ── */}
+                <div style={{ borderTop: '1px solid #333', padding: '10px 4px 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#9ca3af', letterSpacing: '0.08em' }}>AUDIOS</span>
+                  <button className="btn btn-primary btn-sm" onClick={() => setAddCinematicAudioModal(true)}>
+                    <Plus size={13} /> Nuevo audio
+                  </button>
+                </div>
+                <div className="challenge-list">
+                  {cinematicAudioData.map(a => (
+                    <div key={a.name} className="challenge-item">
+                      <button
+                        className="obj-play-btn"
+                        title="Reproducir"
+                        onClick={() => setPlayCinematicAudioConfirm(a)}
+                      >
+                        <Play size={10} fill="#fff" color="#fff" />
+                      </button>
+                      <span style={{ flex: 1, fontSize: 13 }}>{a.name}</span>
+                      <span style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+                        {a.audioPath ? a.audioPath.split(/[\\/]/).pop() : 'Sin audio'}
+                      </span>
+                      <button className="obj-del-btn" onClick={() => setDeleteCinematicAudioConfirm(a)} title="Eliminar audio">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {cinematicAudioData.length === 0 && (
+                    <div style={{ color: '#4b5563', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
+                      No hay audios.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'misiones' && (
+              <div className="obj-list">
+                <div className="obj-list-toolbar">
+                  <button className="btn btn-primary btn-sm" onClick={() => setAddMissionModal(true)}>
+                    <Plus size={13} /> Nueva misión
+                  </button>
+                </div>
+                <table className="obj-table">
+                  <thead>
+                    <tr>
+                      <th className="obj-th obj-th-num">#</th>
+                      <th className="obj-th obj-th-play"></th>
+                      <th className="obj-th obj-th-name">Nombre</th>
+                      <th className="obj-th obj-th-del"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {regularMissions.map(m => (
+                      <tr key={m.id} className="obj-row">
+                        <td className="obj-td obj-td-num">{m.id}</td>
+                        <td className="obj-td obj-td-play">
+                          <button
+                            className={`obj-play-btn${isAnimating ? ' obj-play-btn--blocked' : executedMissions.has(m.id) ? ' obj-play-btn--done' : ''}`}
+                            disabled={isAnimating}
+                            onClick={() => { fireMission(m.name, `mission-${m.id}`); setExecutedMissions(prev => new Set(prev).add(m.id)) }}
+                          ><Play size={10} fill="#fff" color="#fff" /></button>
+                        </td>
+                        <td className="obj-td obj-td-name">
+                          {m.name}
+                          {animatingKey === `mission-${m.id}` && <span className="obj-executing-badge">En ejecución</span>}
+                          {executedMissions.has(m.id) && animatingKey !== `mission-${m.id}` && <span className="obj-executed-badge">Ya ejecutado</span>}
+                        </td>
+                        <td className="obj-td obj-td-del">
+                          <button className="obj-del-btn" onClick={() => setDeleteMissionConfirm(m)} title="Eliminar misión">
+                            <Trash2 size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ padding: '12px 4px 0', display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setMissionModal(true)}>
+                    Iniciar misión
+                  </button>
+                  {state.missionView?.active && (
+                    <button className="btn btn-danger" onClick={() => window.electronAPI.updateAppState({ missionView: null })}>
+                      Restaurar
+                    </button>
+                  )}
+                </div>
+                <div style={{ padding: '8px 4px 4px' }}>
+                  <button
+                    className={`btn mission-improsible-btn${improsibleExecuted ? ' mission-improsible-btn--done' : ''}`}
+                    style={{ width: '100%' }}
+                    disabled={isAnimating}
+                    onClick={() => { fireMission('Misión Improsible', 'improsible'); setImprosibleExecuted(true) }}
+                  >
+                    Misión Improsible
+                    {animatingKey === 'improsible' && <span className="obj-executing-badge" style={{ marginLeft: 10 }}>En ejecución</span>}
+                    {improsibleExecuted && animatingKey !== 'improsible' && <span className="obj-executed-badge" style={{ marginLeft: 10 }}>Ya ejecutado</span>}
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+
+        <div className="right-panel">
+          <div className="preview-section">
+            <div className="panel-title" style={{ padding: '10px 0 6px' }}>Vista previa</div>
+            <div className="preview-frame">
+              <ProjectionPreview state={state} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Ruleta confirm ── */}
+      {rouletteConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setRouletteConfirm(false)}>
+          <div className="obj-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 340, textAlign: 'center' }}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Iniciar ruleta?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 20px' }}>
+              Se mostrará una animación de ruleta en la proyección y se seleccionará un desafío al azar.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setRouletteConfirm(false)}>Cancelar</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const enabledArray = [...enabledChallenges]
+                  const winnerIndex = Math.floor(Math.random() * enabledArray.length)
+                  const winnerName = enabledArray[winnerIndex]
+                  window.electronAPI.updateAppState({ curtain: false, activeCinematic: null, activeCinematicName: null })
+                  window.electronAPI.startRoulette(winnerIndex, enabledArray)
+                  setEnabledChallenges(prev => { const s = new Set(prev); s.delete(winnerName); return s })
+                  setRouletteConfirm(false)
+                }}
+              >
+                Iniciar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Anunciar objetivo ── */}
+      {announceModal && (
+        <div className="obj-modal-overlay" onClick={() => setAnnounceModal(null)}>
+          <div className="obj-modal" onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-num">#{announceModal.objective.id}</span>
+              <span className="obj-modal-title">{announceModal.objective.name}</span>
+              <span className="obj-modal-pts">{announceModal.objective.points} pts</span>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <span className="field-label">Participante</span>
+              <select
+                className="field-input"
+                value={announceModal.participantId}
+                onChange={e => setAnnounceModal({ ...announceModal, participantId: e.target.value })}
+              >
+                {state.participants.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => setAnnounceModal(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={() => {
+                const { objective, participantId } = announceModal
+                setAnnounceModal(null)
+                setExecutedObjectives(prev => new Set(prev).add(objective.id))
+                blockFor(5000, `obj-${objective.id}`)
+                window.electronAPI.announceObjective(objective.name)
+                setTimeout(() => window.electronAPI.updateScore(participantId, objective.points), 5000)
+              }}>Ejecutar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Iniciar misión ── */}
+      {missionModal && state && (
+        <div className="obj-modal-overlay" onClick={() => setMissionModal(false)}>
+          <div className="obj-modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Iniciar misión</span>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Misión</span>
+              <select className="field-input" value={missionName} onChange={e => setMissionName(e.target.value)}>
+                {regularMissions.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {state.participants.map(p => (
+                <div key={p.id} className="field-row">
+                  <span className="field-label" style={{ width: 120, fontSize: 13, color: '#eee' }}>{p.name}</span>
+                  <select
+                    className="field-input"
+                    value={missionAssignments[p.id] ?? 'none'}
+                    onChange={e => setMissionAssignments(prev => ({ ...prev, [p.id]: e.target.value as 'impro' | 'sible' | 'none' }))}
+                  >
+                    <option value="none">No participa</option>
+                    <option value="impro">Equipo A</option>
+                    <option value="sible">Equipo B</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+            {!missionCanStart && Object.keys(missionAssignments).length > 0 && (
+              <div style={{ fontSize: 12, color: '#dc2626', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4, padding: '6px 10px' }}>
+                Debe haber al menos un participante en cada equipo.
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => setMissionModal(false)}>Cancelar</button>
+              <button
+                className="btn btn-primary"
+                disabled={!missionCanStart}
+                onClick={() => {
+                  const teamImpro = state.participants.filter(p => missionAssignments[p.id] === 'impro').map(p => p.id)
+                  const teamSible = state.participants.filter(p => missionAssignments[p.id] === 'sible').map(p => p.id)
+                  window.electronAPI.updateAppState({ missionView: { active: true, name: missionName, teamImpro, teamSible } })
+                  setMissionModal(false)
+                }}
+              >
+                Iniciar misión
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Ver más objetivo ── */}
+      {modalObjective && (
+        <div className="obj-modal-overlay" onClick={() => setModalObjective(null)}>
+          <div className="obj-modal" onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-num">#{modalObjective.id}</span>
+              <span className="obj-modal-title">{modalObjective.name}</span>
+              <span className="obj-modal-pts">{modalObjective.points} pts</span>
+            </div>
+            <p className="obj-modal-desc">{modalObjective.description}</p>
+            <button className="btn btn-ghost obj-modal-close" onClick={() => setModalObjective(null)}>Cerrar</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Añadir misión ── */}
+      {addMissionModal && (
+        <div className="obj-modal-overlay" onClick={() => { setAddMissionModal(false); setNewMissionName(''); setNewMissionAudio(null) }}>
+          <div className="obj-modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Nueva misión</span>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <span className="field-label">Nombre</span>
+              <input
+                className="field-input"
+                placeholder="Nombre de la misión"
+                value={newMissionName}
+                onChange={e => setNewMissionName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Audio</span>
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                <span style={{ flex: 1, fontSize: 12, color: newMissionAudio ? '#f97316' : '#6b7280', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {newMissionAudio ? newMissionAudio.split(/[\\/]/).pop() : 'Sin audio'}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={async () => {
+                  const p = await window.electronAPI.selectAudio()
+                  if (p) setNewMissionAudio(p)
+                }}>Seleccionar</button>
+                {newMissionAudio && <button className="btn btn-ghost btn-sm" onClick={() => setNewMissionAudio(null)}>✕</button>}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setAddMissionModal(false); setNewMissionName(''); setNewMissionAudio(null) }}>Cancelar</button>
+              <button className="btn btn-primary" disabled={!newMissionName.trim()} onClick={handleAddMission}>Crear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Eliminar misión ── */}
+      {deleteMissionConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setDeleteMissionConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Eliminar misión?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 4px' }}>
+              Se eliminará permanentemente:
+            </p>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>
+              {deleteMissionConfirm.name}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setDeleteMissionConfirm(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={() => handleDeleteMission(deleteMissionConfirm)}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Añadir objetivo ── */}
+      {addObjectiveModal && (
+        <div className="obj-modal-overlay" onClick={() => { setAddObjectiveModal(false); setNewObjName(''); setNewObjDesc(''); setNewObjPoints(5); setNewObjAudio(null) }}>
+          <div className="obj-modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Nuevo objetivo</span>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <span className="field-label">Nombre</span>
+              <input
+                className="field-input"
+                placeholder="Nombre del objetivo"
+                value={newObjName}
+                onChange={e => setNewObjName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Puntos</span>
+              <input
+                className="field-input"
+                type="number"
+                min={1}
+                value={newObjPoints}
+                onChange={e => setNewObjPoints(Number(e.target.value))}
+                style={{ maxWidth: 80 }}
+              />
+            </div>
+            <div className="field-row" style={{ alignItems: 'flex-start' }}>
+              <span className="field-label" style={{ paddingTop: 6 }}>Descripción</span>
+              <textarea
+                className="field-input"
+                placeholder="Descripción del objetivo"
+                rows={3}
+                value={newObjDesc}
+                onChange={e => setNewObjDesc(e.target.value)}
+                style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }}
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Audio</span>
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                <span style={{ flex: 1, fontSize: 12, color: newObjAudio ? '#f97316' : '#6b7280', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {newObjAudio ? newObjAudio.split(/[\\/]/).pop() : 'Sin audio'}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={async () => {
+                  const p = await window.electronAPI.selectAudio()
+                  if (p) setNewObjAudio(p)
+                }}>Seleccionar</button>
+                {newObjAudio && <button className="btn btn-ghost btn-sm" onClick={() => setNewObjAudio(null)}>✕</button>}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setAddObjectiveModal(false); setNewObjName(''); setNewObjDesc(''); setNewObjPoints(5); setNewObjAudio(null) }}>Cancelar</button>
+              <button className="btn btn-primary" disabled={!newObjName.trim() || !newObjDesc.trim()} onClick={handleAddObjective}>Crear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Eliminar objetivo ── */}
+      {deleteObjectiveConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setDeleteObjectiveConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Eliminar objetivo?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 4px' }}>
+              Se eliminará permanentemente:
+            </p>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>
+              {deleteObjectiveConfirm.name}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setDeleteObjectiveConfirm(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={() => handleDeleteObjective(deleteObjectiveConfirm)}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Añadir desafío ── */}
+      {addChallengeModal && (
+        <div className="obj-modal-overlay" onClick={() => { setAddChallengeModal(false); setNewChallengeName(''); setNewChallengeAudio(null) }}>
+          <div className="obj-modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Nuevo desafío</span>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <span className="field-label">Nombre</span>
+              <input
+                className="field-input"
+                placeholder="Nombre del desafío"
+                value={newChallengeName}
+                onChange={e => setNewChallengeName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Audio</span>
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                <span style={{ flex: 1, fontSize: 12, color: newChallengeAudio ? '#f97316' : '#6b7280', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {newChallengeAudio ? newChallengeAudio.split(/[\\/]/).pop() : 'Sin audio'}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={async () => {
+                  const p = await window.electronAPI.selectAudio()
+                  if (p) setNewChallengeAudio(p)
+                }}>Seleccionar</button>
+                {newChallengeAudio && <button className="btn btn-ghost btn-sm" onClick={() => setNewChallengeAudio(null)}>✕</button>}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setAddChallengeModal(false); setNewChallengeName(''); setNewChallengeAudio(null) }}>Cancelar</button>
+              <button className="btn btn-primary" disabled={!newChallengeName.trim()} onClick={handleAddChallenge}>Crear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirmar reproducción cinemática ── */}
+      {playCinematicConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setPlayCinematicConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 340, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Reproducir cinemática?</span>
+            </div>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>
+              {playCinematicConfirm.name}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setPlayCinematicConfirm(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={() => {
+                window.electronAPI.updateAppState({ activeCinematic: playCinematicConfirm.videoPath, activeCinematicName: playCinematicConfirm.name, curtain: false })
+                setPlayCinematicConfirm(null)
+              }}>Reproducir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirmar reproducción audio ── */}
+      {playCinematicAudioConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setPlayCinematicAudioConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 340, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Reproducir audio?</span>
+            </div>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>
+              {playCinematicAudioConfirm.name}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setPlayCinematicAudioConfirm(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={() => {
+                const { audioPath } = playCinematicAudioConfirm
+                if (audioPath) playAudio(toLocalFile(audioPath)!, state?.volume ?? 100)
+                setPlayCinematicAudioConfirm(null)
+              }}>Reproducir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Añadir audio cinemática ── */}
+      {addCinematicAudioModal && (
+        <div className="obj-modal-overlay" onClick={() => { setAddCinematicAudioModal(false); setNewCinematicAudioName(''); setNewCinematicAudioPath(null) }}>
+          <div className="obj-modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Nuevo audio</span>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <span className="field-label">Nombre</span>
+              <input
+                className="field-input"
+                placeholder="Nombre del audio"
+                value={newCinematicAudioName}
+                onChange={e => setNewCinematicAudioName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Audio</span>
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                <span style={{ flex: 1, fontSize: 12, color: newCinematicAudioPath ? '#f97316' : '#6b7280', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {newCinematicAudioPath ? newCinematicAudioPath.split(/[\\/]/).pop() : 'Sin audio'}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={async () => {
+                  const p = await window.electronAPI.selectAudio()
+                  if (p) setNewCinematicAudioPath(p)
+                }}>Seleccionar</button>
+                {newCinematicAudioPath && <button className="btn btn-ghost btn-sm" onClick={() => setNewCinematicAudioPath(null)}>✕</button>}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setAddCinematicAudioModal(false); setNewCinematicAudioName(''); setNewCinematicAudioPath(null) }}>Cancelar</button>
+              <button className="btn btn-primary" disabled={!newCinematicAudioName.trim() || !newCinematicAudioPath} onClick={handleAddCinematicAudio}>Crear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Eliminar audio cinemática ── */}
+      {deleteCinematicAudioConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setDeleteCinematicAudioConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Eliminar audio?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 4px' }}>Se eliminará permanentemente:</p>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>{deleteCinematicAudioConfirm.name}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setDeleteCinematicAudioConfirm(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={() => handleDeleteCinematicAudio(deleteCinematicAudioConfirm)}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Añadir cinemática ── */}
+      {addCinematicModal && (
+        <div className="obj-modal-overlay" onClick={() => { setAddCinematicModal(false); setNewCinematicName(''); setNewCinematicVideo(null) }}>
+          <div className="obj-modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Nueva cinemática</span>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <span className="field-label">Nombre</span>
+              <input
+                className="field-input"
+                placeholder="Nombre de la cinemática"
+                value={newCinematicName}
+                onChange={e => setNewCinematicName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field-row">
+              <span className="field-label">Video</span>
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                <span style={{ flex: 1, fontSize: 12, color: newCinematicVideo ? '#f97316' : '#6b7280', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {newCinematicVideo ? newCinematicVideo.split(/[\\/]/).pop() : 'Sin video'}
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={async () => {
+                  const p = await window.electronAPI.selectVideo()
+                  if (p) setNewCinematicVideo(p)
+                }}>Seleccionar</button>
+                {newCinematicVideo && <button className="btn btn-ghost btn-sm" onClick={() => setNewCinematicVideo(null)}>✕</button>}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setAddCinematicModal(false); setNewCinematicName(''); setNewCinematicVideo(null) }}>Cancelar</button>
+              <button className="btn btn-primary" disabled={!newCinematicName.trim() || !newCinematicVideo} onClick={handleAddCinematic}>Crear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Eliminar cinemática ── */}
+      {deleteCinematicConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setDeleteCinematicConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Eliminar cinemática?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 4px' }}>Se eliminará permanentemente:</p>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>{deleteCinematicConfirm.name}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setDeleteCinematicConfirm(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={() => handleDeleteCinematic(deleteCinematicConfirm)}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Eliminar desafío ── */}
+      {finalizarConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setFinalizarConfirm(false)}>
+          <div className="obj-modal" style={{ maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Finalizar proyección?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 20px' }}>
+              Se cerrará la ventana de proyección.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setFinalizarConfirm(false)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={() => { window.electronAPI.closeProjection(); setFinalizarConfirm(false) }}>Finalizar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteChallengeConfirm && (
+        <div className="obj-modal-overlay" onClick={() => setDeleteChallengeConfirm(null)}>
+          <div className="obj-modal" style={{ maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header" style={{ justifyContent: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>¿Eliminar desafío?</span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 4px' }}>
+              Se eliminará permanentemente:
+            </p>
+            <p style={{ color: '#f97316', fontSize: 14, fontWeight: 700, margin: '0 0 20px' }}>
+              {deleteChallengeConfirm}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setDeleteChallengeConfirm(null)}>Cancelar</button>
+              <button className="btn btn-danger" onClick={() => handleDeleteChallenge(deleteChallengeConfirm)}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

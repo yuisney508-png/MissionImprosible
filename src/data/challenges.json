@@ -1,0 +1,38 @@
+[
+  {
+    "name": "Clave dinámica",
+    "audioPath": "audio/desafios/claveDinamica.mpeg"
+  },
+  {
+    "name": "El infiltrado",
+    "audioPath": "audio/desafios/elInfiltrado.mpeg"
+  },
+  {
+    "name": "Transmisión de mensaje",
+    "audioPath": "audio/desafios/transmisionDeMensaje.mpeg"
+  },
+  {
+    "name": "Código jerigonza",
+    "audioPath": "audio/desafios/codigoJerigonza.mpeg"
+  },
+  {
+    "name": "El nuevo gadget",
+    "audioPath": "audio/desafios/elNuevoGadget.mpeg"
+  },
+  {
+    "name": "Interrogatorio",
+    "audioPath": "audio/desafios/interrogatorio.mpeg"
+  },
+  {
+    "name": "Coartada imposible",
+    "audioPath": "audio/desafios/cuartadaImposible.mpeg"
+  },
+  {
+    "name": "Explosión verbal",
+    "audioPath": "audio/desafios/explosionVerbal.mpeg"
+  },
+  {
+    "name": "Cuenta regresiva",
+    "audioPath": "audio/desafios/cuentaRegresiva.mpeg"
+  }
+]

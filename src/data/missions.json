@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "name": "Switch de agentes",
+    "audioPath": "audio/misiones/switchDeAgentes.mpeg"
+  },
+  {
+    "id": 2,
+    "name": "Lugares secretos",
+    "audioPath": "audio/misiones/lugaresSecretos.mpeg"
+  },
+  {
+    "id": 3,
+    "name": "Título clasificado",
+    "audioPath": "audio/misiones/tituloClasificado.mpeg"
+  },
+  {
+    "id": 4,
+    "name": "Protocolo cine negro",
+    "audioPath": "audio/misiones/protocoloCineNegro.mpeg"
+  },
+  {
+    "id": 5,
+    "name": "El agente de las mil caras",
+    "audioPath": "audio/misiones/elAgenteDeLasMilCaras.mpeg"
+  },
+  {
+    "id": 6,
+    "name": "Operación remake",
+    "audioPath": "audio/misiones/operacionRemake.mpeg"
+  },
+  {
+    "id": 7,
+    "name": "Operación Déjà Vu",
+    "audioPath": "audio/misiones/operacionDejaVu.mpeg"
+  },
+  {
+    "id": 8,
+    "name": "Misión Improsible",
+    "audioPath": "audio/misiones/misionFinal.mpeg"
+  }
+]
