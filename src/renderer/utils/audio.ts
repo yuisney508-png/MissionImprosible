@@ -21,14 +21,53 @@ export function playAudio(url: string, volume: number): HTMLAudioElement {
  * Plays an audio URL and calls onDuration(ms) once the duration is known.
  * Useful for timing UI animations to match audio length.
  */
+function resolveInfinityDuration(audio: HTMLAudioElement, onResolved: (durationMs: number) => void): void {
+  // WAV files sometimes report Infinity — seek past the end to force duration calculation
+  audio.currentTime = 1e101
+  const onDurationChange = () => {
+    if (isFinite(audio.duration)) {
+      audio.removeEventListener('durationchange', onDurationChange)
+      console.log('[audio] durationchange after seek — duration:', audio.duration, 's')
+      onResolved(audio.duration * 1000)
+    }
+  }
+  audio.addEventListener('durationchange', onDurationChange)
+}
+
 export function playAudioTimed(
   url: string,
   volume: number,
-  onDuration: (durationMs: number) => void
+  onDuration: (remainingMs: number) => void
 ): HTMLAudioElement {
   const audio = new Audio(url)
   audio.volume = normalizeVolume(volume)
-  audio.addEventListener('loadedmetadata', () => onDuration(audio.duration * 1000))
+  const start = Date.now()
+  let resolved = false
+  const resolve = (remaining: number) => {
+    if (resolved) return
+    resolved = true
+    onDuration(remaining)
+  }
+  audio.addEventListener('loadedmetadata', () => {
+    console.log('[audio] loadedmetadata fired — duration:', audio.duration, 's')
+    if (!isFinite(audio.duration)) {
+      resolveInfinityDuration(audio, (totalMs) => {
+        audio.currentTime = 0
+        audio.play()
+        const elapsed = Date.now() - start
+        resolve(Math.max(totalMs - elapsed, totalMs))
+      })
+      return
+    }
+    const elapsed = Date.now() - start
+    const remaining = Math.max(audio.duration * 1000 - elapsed, 0)
+    console.log('[audio] remaining:', remaining, 'ms')
+    resolve(remaining)
+  })
+  audio.addEventListener('ended', () => {
+    console.log('[audio] ended fired')
+    resolve(0)
+  })
   audio.play()
   return audio
 }
@@ -42,6 +81,12 @@ export function getAudioDuration(
   onDuration: (durationMs: number) => void
 ): void {
   const audio = new Audio(url)
-  audio.addEventListener('loadedmetadata', () => onDuration(audio.duration * 1000))
+  audio.addEventListener('loadedmetadata', () => {
+    if (!isFinite(audio.duration)) {
+      resolveInfinityDuration(audio, onDuration)
+      return
+    }
+    onDuration(audio.duration * 1000)
+  })
   audio.load()
 }

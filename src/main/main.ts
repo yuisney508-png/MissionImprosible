@@ -8,7 +8,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'localfile', privileges: { secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
 ])
 import { AppState, Participant } from '../shared/types'
-import { getMissions, saveMissions, getObjectives, saveObjectives, getChallenges, saveChallenges, getCinematics, saveCinematics, getCinematicAudios, saveCinematicAudios, getSounds, resolveAudioPath, getSettings, saveSettings } from './store'
+import { getMissions, saveMissions, getObjectives, saveObjectives, getChallenges, saveChallenges, getCinematics, saveCinematics, getCinematicAudios, saveCinematicAudios, getSounds, resolveAudioPath, getSettings, saveSettings, getSvgLogoPath, getSvgLogoOrangePath } from './store'
 import { MissionData, ObjectiveData, ChallengeData, CinematicData, CinematicAudioData } from '../shared/types'
 
 let controlWindow: BrowserWindow | null = null
@@ -32,6 +32,13 @@ let appState: AppState = {
   overlayOpacity: savedSettings.overlayOpacity,
   rouletteTickBase: savedSettings.rouletteTickBase,
   rouletteTickRange: savedSettings.rouletteTickRange,
+  curtainFlipEnabled: savedSettings.curtainFlipEnabled,
+  curtainFlipDuration: savedSettings.curtainFlipDuration,
+  curtainPulseEnabled: savedSettings.curtainPulseEnabled,
+  curtainPulseDuration: savedSettings.curtainPulseDuration,
+  curtainLogoColor: savedSettings.curtainLogoColor,
+  curtainWobbleEnabled: savedSettings.curtainWobbleEnabled,
+  curtainWobbleDuration: savedSettings.curtainWobbleDuration,
   curtain: true,
 }
 
@@ -106,7 +113,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 
 ipcMain.on('state:get', (event) => { event.sender.send('state:update', appState) })
-const PERSISTED_KEYS: (keyof AppState)[] = ['volume', 'overlayOpacity', 'rouletteTickBase', 'rouletteTickRange']
+const PERSISTED_KEYS: (keyof AppState)[] = ['volume', 'overlayOpacity', 'rouletteTickBase', 'rouletteTickRange', 'curtainFlipEnabled', 'curtainFlipDuration', 'curtainPulseEnabled', 'curtainPulseDuration', 'curtainLogoColor', 'curtainWobbleEnabled', 'curtainWobbleDuration']
 
 ipcMain.on('appstate:update', (_event, update: Partial<AppState>) => {
   appState = { ...appState, ...update }
@@ -117,6 +124,13 @@ ipcMain.on('appstate:update', (_event, update: Partial<AppState>) => {
       overlayOpacity: appState.overlayOpacity ?? 80,
       rouletteTickBase: appState.rouletteTickBase ?? 180,
       rouletteTickRange: appState.rouletteTickRange ?? 520,
+      curtainFlipEnabled: appState.curtainFlipEnabled ?? true,
+      curtainFlipDuration: appState.curtainFlipDuration ?? 10,
+      curtainPulseEnabled: appState.curtainPulseEnabled ?? true,
+      curtainPulseDuration: appState.curtainPulseDuration ?? 5,
+      curtainLogoColor: appState.curtainLogoColor ?? 'white',
+      curtainWobbleEnabled: appState.curtainWobbleEnabled ?? false,
+      curtainWobbleDuration: appState.curtainWobbleDuration ?? 0.35,
     })
   }
 })
@@ -234,6 +248,10 @@ ipcMain.handle('file:select-video', async () => {
 ipcMain.handle('data:get-logo-path', () => {
   return resolveAudioPath('img/logo.png')
 })
+ipcMain.handle('data:get-svg-logo-path', () => getSvgLogoPath())
+ipcMain.handle('data:get-svg-logo-orange-path', () => getSvgLogoOrangePath())
+ipcMain.handle('data:get-svg-logo-content', () => fs.readFileSync(getSvgLogoPath(), 'utf-8'))
+ipcMain.handle('data:get-svg-logo-orange-content', () => fs.readFileSync(getSvgLogoOrangePath(), 'utf-8'))
 
 ipcMain.handle('file:select-logo', async () => {
   if (!controlWindow) return null

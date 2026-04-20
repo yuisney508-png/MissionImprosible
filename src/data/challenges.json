@@ -1,38 +1,38 @@
 [
   {
     "name": "Clave dinámica",
-    "audioPath": "audio/desafios/claveDinamica.mpeg"
+    "audioPath": "audio/desafios/D_Clave dinámica.wav"
   },
   {
     "name": "El infiltrado",
-    "audioPath": "audio/desafios/elInfiltrado.mpeg"
+    "audioPath": "audio/desafios/D_El infiltrado.wav"
   },
   {
     "name": "Transmisión de mensaje",
-    "audioPath": "audio/desafios/transmisionDeMensaje.mpeg"
+    "audioPath": "audio/desafios/D_Transmisión de mensaje.wav"
   },
   {
     "name": "Código jerigonza",
-    "audioPath": "audio/desafios/codigoJerigonza.mpeg"
+    "audioPath": "audio/desafios/D_Código jerigonza.wav"
   },
   {
     "name": "El nuevo gadget",
-    "audioPath": "audio/desafios/elNuevoGadget.mpeg"
+    "audioPath": "audio/desafios/D_El nuevo gadjet.wav"
   },
   {
     "name": "Interrogatorio",
-    "audioPath": "audio/desafios/interrogatorio.mpeg"
+    "audioPath": "audio/desafios/D_Interrogatorio.wav"
   },
   {
     "name": "Coartada imposible",
-    "audioPath": "audio/desafios/cuartadaImposible.mpeg"
+    "audioPath": "audio/desafios/D_Coartada imposible.wav"
   },
   {
     "name": "Explosión verbal",
-    "audioPath": "audio/desafios/explosionVerbal.mpeg"
+    "audioPath": "audio/desafios/D_Explosión verbal.wav"
   },
   {
     "name": "Cuenta regresiva",
-    "audioPath": "audio/desafios/cuentaRegresiva.mpeg"
+    "audioPath": "audio/desafios/D_Cuenta regresiva.wav"
   }
 ]

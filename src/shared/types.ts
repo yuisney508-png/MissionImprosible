@@ -11,6 +11,7 @@ export interface MissionView {
   name: string
   teamImpro: string[]
   teamSible: string[]
+  allPlay?: boolean
 }
 
 export interface AppState {
@@ -29,6 +30,13 @@ export interface AppState {
   logoVersion?: number
   rouletteTickBase?: number
   rouletteTickRange?: number
+  curtainFlipEnabled?: boolean
+  curtainFlipDuration?: number
+  curtainPulseEnabled?: boolean
+  curtainPulseDuration?: number
+  curtainLogoColor?: 'white' | 'orange'
+  curtainWobbleEnabled?: boolean
+  curtainWobbleDuration?: number
 }
 
 export interface MissionData {

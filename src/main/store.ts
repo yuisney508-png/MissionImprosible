@@ -89,6 +89,13 @@ export interface Settings {
   overlayOpacity: number
   rouletteTickBase: number
   rouletteTickRange: number
+  curtainFlipEnabled: boolean
+  curtainFlipDuration: number
+  curtainPulseEnabled: boolean
+  curtainPulseDuration: number
+  curtainLogoColor: 'white' | 'orange'
+  curtainWobbleEnabled: boolean
+  curtainWobbleDuration: number
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -96,6 +103,13 @@ const SETTINGS_DEFAULTS: Settings = {
   overlayOpacity: 80,
   rouletteTickBase: 180,
   rouletteTickRange: 520,
+  curtainFlipEnabled: true,
+  curtainFlipDuration: 10,
+  curtainPulseEnabled: true,
+  curtainPulseDuration: 5,
+  curtainLogoColor: 'white',
+  curtainWobbleEnabled: false,
+  curtainWobbleDuration: 0.35,
 }
 
 export function getSettings(): Settings {
@@ -109,6 +123,14 @@ export function getSettings(): Settings {
 
 export function saveSettings(settings: Settings): void {
   saveJson('settings.json', settings)
+}
+
+export function getSvgLogoPath(): string {
+  return path.join(getDataDir(), 'img', 'logoVectorizado.svg')
+}
+
+export function getSvgLogoOrangePath(): string {
+  return path.join(getDataDir(), 'img', 'logoVectorizadoNaranja.svg')
 }
 
 export function getSounds(): Record<string, string | null> {

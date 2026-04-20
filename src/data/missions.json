@@ -2,41 +2,41 @@
   {
     "id": 1,
     "name": "Switch de agentes",
-    "audioPath": "audio/misiones/switchDeAgentes.mpeg"
+    "audioPath": "audio/misiones/M_Switch.wav"
   },
   {
     "id": 2,
     "name": "Lugares secretos",
-    "audioPath": "audio/misiones/lugaresSecretos.mpeg"
+    "audioPath": "audio/misiones/M_Lugares.wav"
   },
   {
     "id": 3,
     "name": "Título clasificado",
-    "audioPath": "audio/misiones/tituloClasificado.mpeg"
+    "audioPath": "audio/misiones/M_Título.wav"
   },
   {
     "id": 4,
     "name": "Protocolo cine negro",
-    "audioPath": "audio/misiones/protocoloCineNegro.mpeg"
+    "audioPath": "audio/misiones/M_Cine.wav"
   },
   {
     "id": 5,
     "name": "El agente de las mil caras",
-    "audioPath": "audio/misiones/elAgenteDeLasMilCaras.mpeg"
+    "audioPath": "audio/misiones/M_Agentemil.wav"
   },
   {
     "id": 6,
     "name": "Operación remake",
-    "audioPath": "audio/misiones/operacionRemake.mpeg"
+    "audioPath": "audio/misiones/M_Remake.wav"
   },
   {
     "id": 7,
     "name": "Operación Déjà Vu",
-    "audioPath": "audio/misiones/operacionDejaVu.mpeg"
+    "audioPath": "audio/misiones/M_Dejavu.wav"
   },
   {
     "id": 8,
     "name": "Misión Improsible",
-    "audioPath": "audio/misiones/misionFinal.mpeg"
+    "audioPath": "audio/misiones/M_Final.wav"
   }
 ]

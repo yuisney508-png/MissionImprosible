@@ -1,9 +1,25 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+/// <reference path="../electron-api.d.ts" />
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { AppState } from '../../shared/types'
 import { RATING_LABELS, RATING_COLORS } from '../constants/ratings'
 import { CHALLENGES } from '../constants/challenges'
 import { playAudio, playAudioTimed, normalizeVolume } from '../utils/audio'
 
+
+function addModificableClass(svgContent: string): string {
+  return svgContent.replace(/\bclass="([^"]*)"/g, (match, classes) => {
+    const list = classes.split(/\s+/)
+    const hasFill = list.some((c: string) => c === 'st1' || c === 'st4')
+    const hasStroke = list.includes('st3')
+    if (hasFill && !list.includes('modificable')) {
+      return `class="${classes} modificable"`
+    }
+    if (hasStroke && !list.includes('modificable-stroke')) {
+      return `class="${classes} modificable-stroke"`
+    }
+    return match
+  })
+}
 
 function toLocalFile(absPath: string | null): string | null {
   if (!absPath) return null
@@ -39,6 +55,7 @@ export function ProjectionApp() {
   const [activeRatings, setActiveRatings] = useState<Record<string, string> | null>(null)
   const [ratingsExiting, setRatingsExiting] = useState(false)
   const [rouletteVisible, setRouletteVisible] = useState(false)
+  const [rouletteExiting, setRouletteExiting] = useState(false)
   const [rouletteWinner, setRouletteWinner] = useState<number | null>(null)
   const [rouletteRevealed, setRouletteRevealed] = useState(false)
   const rouletteCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -52,13 +69,15 @@ export function ProjectionApp() {
   const rouletteNamesRef = useRef<string[]>([])
   const soundObjetivoRef = useRef<string | null>(null)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [svgLogoContent, setSvgLogoContent] = useState<string | null>(null)
+  const [svgLogoOrangeContent, setSvgLogoOrangeContent] = useState<string | null>(null)
   const [curtainMounted, setCurtainMounted] = useState(true)
   const [curtainVisible, setCurtainVisible] = useState(true)
   const prevCurtainRef = useRef<boolean>(true)
   const prevCinematicRef = useRef<string | null | undefined>(null)
   const curtainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!state) return
     const curr = state.curtain ?? false
     const prev = prevCurtainRef.current
@@ -96,6 +115,7 @@ export function ProjectionApp() {
         if (m.audioPath) map[m.name] = toLocalFile(m.audioPath)!
       }
       missionSfxMapRef.current = map
+      console.log('[mission] sfxMap built:', map)
     })
     ;window.electronAPI.getChallenges().then((challenges: { name: string; audioPath: string | null }[]) => {
       const sfx: Record<string, string> = {}
@@ -113,6 +133,8 @@ export function ProjectionApp() {
     ;window.electronAPI.getLogoPath().then((p: string | null) => {
       setLogoUrl(toLocalFile(p))
     })
+    ;window.electronAPI.getSvgLogoContent().then(c => setSvgLogoContent(addModificableClass(c)))
+    ;window.electronAPI.getSvgLogoOrangeContent().then(c => setSvgLogoOrangeContent(addModificableClass(c)))
   }, [])
 
   useEffect(() => {
@@ -152,7 +174,7 @@ export function ProjectionApp() {
     }
   }, [state?.participants])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!state) return
     const mv = state.missionView
     if (mv?.active) {
@@ -194,15 +216,23 @@ export function ProjectionApp() {
 
   useEffect(() => {
     const unsub = window.electronAPI.onMissionAnnounce((name) => {
+      console.log('[mission] onMissionAnnounce fired — name:', name)
+      console.log('[mission] sfxMap keys:', Object.keys(missionSfxMapRef.current))
       setMissionAnnouncement(name)
       setMissionAnnouncingOut(false)
       const sfxUrl = missionSfxMapRef.current[name]
+      console.log('[mission] sfxUrl resolved:', sfxUrl)
       if (sfxUrl) {
-        playAudioTimed(sfxUrl, volumeRef.current, (duration) => {
-          const safeDuration = (isFinite(duration) && duration > 500) ? duration : 5000
-          const exitStart = Math.max(safeDuration - 600, 0)
-          setTimeout(() => setMissionAnnouncingOut(true), exitStart)
-          setTimeout(() => { setMissionAnnouncement(null); setMissionAnnouncingOut(false) }, safeDuration)
+        playAudioTimed(sfxUrl, volumeRef.current, (remaining) => {
+          console.log('[mission cinematic] onDuration callback — remaining:', remaining, 'ms')
+          const dur = remaining > 200 ? remaining : 0
+          if (dur > 0) {
+            setTimeout(() => setMissionAnnouncingOut(true), Math.max(dur - 600, 0))
+            setTimeout(() => { setMissionAnnouncement(null); setMissionAnnouncingOut(false) }, dur)
+          } else {
+            setMissionAnnouncingOut(true)
+            setTimeout(() => { setMissionAnnouncement(null); setMissionAnnouncingOut(false) }, 600)
+          }
         })
       } else {
         setTimeout(() => setMissionAnnouncingOut(true), 4400)
@@ -327,13 +357,17 @@ export function ProjectionApp() {
         setTimeout(() => {
           setRouletteRevealed(true)
           const sfxUrl = challengeSfxMapRef.current[rouletteNamesRef.current[winnerIndex]]
+          const hideRoulette = (delay: number) => {
+            const FADE = 600
+            setTimeout(() => setRouletteExiting(true), Math.max(delay - FADE, 0))
+            setTimeout(() => { setRouletteVisible(false); setRouletteWinner(null); setRouletteRevealed(false); setRouletteExiting(false) }, delay)
+          }
           if (sfxUrl) {
-            playAudioTimed(sfxUrl, volumeRef.current, (dur) => {
-              const safeDur = (isFinite(dur) && dur > 500) ? dur : 5000
-              setTimeout(() => { setRouletteVisible(false); setRouletteWinner(null); setRouletteRevealed(false) }, safeDur)
+            playAudioTimed(sfxUrl, volumeRef.current, (remaining) => {
+              hideRoulette(remaining > 200 ? remaining : 5000)
             })
           } else {
-            setTimeout(() => { setRouletteVisible(false); setRouletteWinner(null); setRouletteRevealed(false) }, 5000)
+            hideRoulette(5000)
           }
         }, 2000)
       }
@@ -359,10 +393,49 @@ export function ProjectionApp() {
   const mv = state.missionView?.active ? state.missionView : (missionExiting ? lastMissionRef.current : null)
 
   if (mv?.active || missionExiting) {
-    const impro = state.participants.filter(p => mv!.teamImpro.includes(p.id))
-    const sible = state.participants.filter(p => mv!.teamSible.includes(p.id))
+    const activePlayers = new Set(state.participants.slice(0, state.visibleParticipants).filter(p => !p.eliminated).map(p => p.id))
+    const activeList = state.participants.filter(p => activePlayers.has(p.id))
+
+    if (mv!.allPlay) {
+      return (
+        <div className={`projection-root mission-view${missionExiting ? ' mission-view--exiting' : ''}`}>
+          <div className="mission-header-bar">
+            <h1 className="header-title">
+              <span className="title-mision">MISIÓN </span>
+              <span className="title-impro">IMPRO</span>
+              <span className="title-sible">SIBLE</span>
+            </h1>
+            <div className="mission-name-label">{mv!.name}</div>
+          </div>
+          <div className="mission-arena mission-arena--allplay">
+            <div className="mission-team mission-team--allplay">
+              <div className="mission-team-cards">
+                {activeList.map(p => (
+                  <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`mission-card${elimShake[p.id] ? ' mission-card--shake' : ''}`}>
+                    <div className="mission-card-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
+                      {p.photoPath
+                        ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
+                        : <div className="photo-placeholder">FOTO</div>}
+                      {activeRatings && activeRatings[p.id] && (
+                        <div className={`rating-badge${ratingsExiting ? ' rating-badge--exiting' : ''}`} style={{ color: RATING_COLORS[activeRatings[p.id]] }}>
+                          {RATING_LABELS[activeRatings[p.id]]}
+                        </div>
+                      )}
+                    </div>
+                    <div className="mission-card-name" style={{ background: p.eliminated ? '#4b5563' : undefined, transition: 'background 0.4s' }}>{p.name}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    const impro = state.participants.filter(p => mv!.teamImpro.includes(p.id) && activePlayers.has(p.id))
+    const sible = state.participants.filter(p => mv!.teamSible.includes(p.id) && activePlayers.has(p.id))
     return (
-      <div className="projection-root mission-view">
+      <div className={`projection-root mission-view${missionExiting ? ' mission-view--exiting' : ''}`}>
         <div className="mission-header-bar">
           <h1 className="header-title">
             <span className="title-mision">MISIÓN </span>
@@ -372,7 +445,7 @@ export function ProjectionApp() {
           <div className="mission-name-label">{mv!.name}</div>
         </div>
         <div className="mission-arena">
-          <div className={`mission-team mission-team--impro${missionExiting ? ' exiting' : ''}`}>
+          <div className="mission-team mission-team--impro">
             <div className="mission-team-label"><span className="team-label-impro">EQUIPO A</span></div>
             <div className="mission-team-cards">
               {impro.map(p => (
@@ -393,9 +466,9 @@ export function ProjectionApp() {
             </div>
           </div>
 
-          <div className={`mission-vs${missionExiting ? ' exiting' : ''}`}>VS</div>
+          <div className="mission-vs">VS</div>
 
-          <div className={`mission-team mission-team--sible${missionExiting ? ' exiting' : ''}`}>
+          <div className="mission-team mission-team--sible">
             <div className="mission-team-label"><span className="team-label-sible">EQUIPO B</span></div>
             <div className="mission-team-cards">
               {sible.map(p => (
@@ -472,7 +545,7 @@ export function ProjectionApp() {
       )}
 
       {rouletteVisible && !rouletteRevealed && (
-        <div className="roulette-overlay">
+        <div className={`roulette-overlay${rouletteExiting ? ' roulette-overlay--exiting' : ''}`}>
           <div className="roulette-backdrop" />
           <div className="roulette-content">
             <div className="roulette-title">DESAFÍO</div>
@@ -482,7 +555,7 @@ export function ProjectionApp() {
       )}
 
       {rouletteRevealed && rouletteWinner !== null && (
-        <div className="roulette-overlay">
+        <div className={`roulette-overlay${rouletteExiting ? ' roulette-overlay--exiting' : ''}`}>
           <div className="roulette-backdrop" />
           <div className="roulette-reveal">
             <div className="roulette-reveal-label">DESAFÍO SELECCIONADO</div>
@@ -505,8 +578,26 @@ export function ProjectionApp() {
       )}
 
       {curtainMounted && (
-        <div className={`curtain-overlay${curtainVisible ? '' : ' curtain-fade-out'}`}>
-          {logoUrl && <img src={logoUrl} className="curtain-logo" alt="A.I.S." />}
+        <div
+          className={`curtain-overlay${curtainVisible ? '' : ' curtain-fade-out'}`}
+          style={{
+            ['--pulse-duration' as string]: `${state?.curtainPulseDuration ?? 5}s`,
+            ['--wobble-duration' as string]: `${state?.curtainWobbleDuration ?? 0.35}s`,
+          } as React.CSSProperties}
+        >
+          {svgLogoContent && (
+            <div className={`curtain-logo-wrapper${(state?.curtainWobbleEnabled ?? false) ? ' wobble-enabled' : ''}`}>
+              <div
+                className="curtain-logo-coin"
+                style={state?.curtainFlipEnabled ?? true
+                  ? { animation: `logo-flip-y ${state?.curtainFlipDuration ?? 10}s linear infinite` }
+                  : { animation: 'none' }}
+              >
+                <div className={`curtain-logo${(state?.curtainPulseEnabled ?? true) ? ' pulse-enabled' : ''}`} dangerouslySetInnerHTML={{ __html: (state?.curtainLogoColor ?? 'white') === 'orange' ? (svgLogoOrangeContent ?? svgLogoContent) : svgLogoContent }} />
+                <div className={`curtain-logo curtain-logo-back${(state?.curtainPulseEnabled ?? true) ? ' pulse-enabled' : ''}`} dangerouslySetInnerHTML={{ __html: svgLogoOrangeContent ?? svgLogoContent }} />
+              </div>
+            </div>
+          )}
         </div>
       )}
 

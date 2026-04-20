@@ -2,5 +2,12 @@
   "volume": 100,
   "overlayOpacity": 80,
   "rouletteTickBase": 1170,
-  "rouletteTickRange": 70
+  "rouletteTickRange": 70,
+  "curtainFlipEnabled": false,
+  "curtainFlipDuration": 3,
+  "curtainPulseEnabled": false,
+  "curtainPulseDuration": 2,
+  "curtainLogoColor": "white",
+  "curtainWobbleEnabled": false,
+  "curtainWobbleDuration": 1.5
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Monitor, Play, RotateCcw, Target, Plus, Trash2 } from 'lucide-react'
 import { AppState, Participant, MissionData, ObjectiveData, CinematicData, CinematicAudioData } from '../../shared/types'
 import { ProjectionPreview } from './ProjectionPreview'
@@ -86,10 +86,12 @@ export function ControlApp() {
   const [missionModal, setMissionModal] = useState(false)
   const [missionName, setMissionName] = useState('')
   const [missionAssignments, setMissionAssignments] = useState<Record<string, 'impro' | 'sible' | 'none'>>({})
+  const [allPlay, setAllPlay] = useState(false)
 
   const missionCanStart = state
-    ? state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'impro') &&
-      state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'sible')
+    ? allPlay ||
+      (state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'impro') &&
+       state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'sible'))
     : false
 
   // Regular missions (exclude "Misión Improsible")
@@ -140,20 +142,20 @@ export function ControlApp() {
     window.electronAPI.updateParticipant({ ...state!.participants.find(p => p.id === id)!, eliminated: false })
   }
 
+  const animatingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const blockFor = (ms: number, key: string) => {
+    if (animatingTimer.current) clearTimeout(animatingTimer.current)
     setIsAnimating(true)
     setAnimatingKey(key)
-    setTimeout(() => { setIsAnimating(false); setAnimatingKey(null) }, ms)
+    animatingTimer.current = setTimeout(() => { setIsAnimating(false); setAnimatingKey(null) }, ms)
   }
 
   const fireMission = (name: string, key: string) => {
     if (isAnimating) return
     const sfxUrl = toLocalFile(missionData.find(m => m.name === name)?.audioPath ?? null)
-    if (sfxUrl) {
-      getAudioDuration(sfxUrl, (duration) => blockFor(duration, key))
-    } else {
-      blockFor(4000, key)
-    }
+    blockFor(4000, key)
+    if (sfxUrl) getAudioDuration(sfxUrl, (duration) => blockFor(duration, key))
     window.electronAPI.announceMission(name)
   }
 
@@ -350,6 +352,16 @@ export function ControlApp() {
           <div className="tab-content">
             {activeTab === 'participantes' && (
               <div className="participants-list">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0 12px' }}>
+                  <span className="field-label">Jugadores visibles</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button className="score-btn score-btn-minus"
+                      onClick={() => window.electronAPI.updateAppState({ visibleParticipants: Math.max(1, state.visibleParticipants - 1) })}>−</button>
+                    <span style={{ fontSize: 20, fontWeight: 900, color: '#f97316', minWidth: 24, textAlign: 'center' }}>{state.visibleParticipants}</span>
+                    <button className="score-btn score-btn-plus"
+                      onClick={() => window.electronAPI.updateAppState({ visibleParticipants: Math.min(4, state.visibleParticipants + 1) })}>+</button>
+                  </div>
+                </div>
                 {state.participants.map((p, idx) => (
                   <div key={p.id} className={`participant-row${shakingIds.has(p.id) ? ' participant-row--shaking' : ''}`} style={{ opacity: idx < state.visibleParticipants ? 1 : 0.35 }}>
                     <div className="participant-thumb" onClick={() => handleSelectPhoto(p.id)} title="Click para cargar foto"
@@ -548,15 +560,74 @@ export function ControlApp() {
                   </div>
                 </div>
                 <div className="config-group">
-                  <div className="config-group-title">Proyección</div>
+                  <div className="config-group-title">Giro</div>
                   <div className="field-row">
-                    <span className="field-label">Jugadores</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <button className="score-btn score-btn-minus"
-                        onClick={() => window.electronAPI.updateAppState({ visibleParticipants: Math.max(1, state.visibleParticipants - 1) })}>−</button>
-                      <span style={{ fontSize: 20, fontWeight: 900, color: '#f97316', minWidth: 24, textAlign: 'center' }}>{state.visibleParticipants}</span>
-                      <button className="score-btn score-btn-plus"
-                        onClick={() => window.electronAPI.updateAppState({ visibleParticipants: Math.min(4, state.visibleParticipants + 1) })}>+</button>
+                    <span className="field-label">Giro 3D</span>
+                    <button
+                      className={`btn btn-sm ${(state.curtainFlipEnabled ?? true) ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => window.electronAPI.updateAppState({ curtainFlipEnabled: !(state.curtainFlipEnabled ?? true) })}
+                    >
+                      {(state.curtainFlipEnabled ?? true) ? 'Activado' : 'Desactivado'}
+                    </button>
+                  </div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Duración</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>{state.curtainFlipDuration ?? 10}s</span>
+                    </div>
+                    <input type="range" className="volume-slider" min={0.5} max={30} step={0.5}
+                      value={state.curtainFlipDuration ?? 10}
+                      onChange={e => window.electronAPI.updateAppState({ curtainFlipDuration: Number(e.target.value) })} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>0.5s (rápido)</span><span>30s (lento)</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="config-group">
+                  <div className="config-group-title">Color</div>
+                  <div className="field-row">
+                    <span className="field-label">Pulso de color</span>
+                    <button
+                      className={`btn btn-sm ${(state.curtainPulseEnabled ?? true) ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => window.electronAPI.updateAppState({ curtainPulseEnabled: !(state.curtainPulseEnabled ?? true) })}
+                    >
+                      {(state.curtainPulseEnabled ?? true) ? 'Activado' : 'Desactivado'}
+                    </button>
+                  </div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Duración</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>{state.curtainPulseDuration ?? 5}s</span>
+                    </div>
+                    <input type="range" className="volume-slider" min={0.5} max={20} step={0.5}
+                      value={state.curtainPulseDuration ?? 5}
+                      onChange={e => window.electronAPI.updateAppState({ curtainPulseDuration: Number(e.target.value) })} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>0.5s (rápido)</span><span>20s (lento)</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="config-group">
+                  <div className="config-group-title">Zumbido</div>
+                  <div className="field-row">
+                    <span className="field-label">Zumbido</span>
+                    <button
+                      className={`btn btn-sm ${(state.curtainWobbleEnabled ?? false) ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => window.electronAPI.updateAppState({ curtainWobbleEnabled: !(state.curtainWobbleEnabled ?? false) })}
+                    >
+                      {(state.curtainWobbleEnabled ?? false) ? 'Activado' : 'Desactivado'}
+                    </button>
+                  </div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Duración</span>
+                      <span style={{ fontSize: 13, color: '#f97316', fontWeight: 700 }}>{(state.curtainWobbleDuration ?? 0.35).toFixed(2)}s</span>
+                    </div>
+                    <input type="range" className="volume-slider" min={0.1} max={1.5} step={0.05}
+                      value={state.curtainWobbleDuration ?? 0.35}
+                      onChange={e => window.electronAPI.updateAppState({ curtainWobbleDuration: Number(e.target.value) })} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b7280' }}>
+                      <span>0.1s (muy rápido)</span><span>1.5s (lento)</span>
                     </div>
                   </div>
                 </div>
@@ -785,7 +856,7 @@ export function ControlApp() {
                         <td className="obj-td obj-td-num">{m.id}</td>
                         <td className="obj-td obj-td-play">
                           <button
-                            className={`obj-play-btn${isAnimating ? ' obj-play-btn--blocked' : executedMissions.has(m.id) ? ' obj-play-btn--done' : ''}`}
+                            className={`obj-play-btn${animatingKey === `mission-${m.id}` ? ' obj-play-btn--executing' : isAnimating ? ' obj-play-btn--blocked' : executedMissions.has(m.id) ? ' obj-play-btn--done' : ''}`}
                             disabled={isAnimating}
                             onClick={() => { fireMission(m.name, `mission-${m.id}`); setExecutedMissions(prev => new Set(prev).add(m.id)) }}
                           ><Play size={10} fill="#fff" color="#fff" /></button>
@@ -810,13 +881,13 @@ export function ControlApp() {
                   </button>
                   {state.missionView?.active && (
                     <button className="btn btn-danger" onClick={() => window.electronAPI.updateAppState({ missionView: null })}>
-                      Restaurar
+                      Finalizar misión
                     </button>
                   )}
                 </div>
                 <div style={{ padding: '8px 4px 4px' }}>
                   <button
-                    className={`btn mission-improsible-btn${improsibleExecuted ? ' mission-improsible-btn--done' : ''}`}
+                    className={`btn mission-improsible-btn${animatingKey === 'improsible' ? ' mission-improsible-btn--executing' : improsibleExecuted ? ' mission-improsible-btn--done' : ''}`}
                     style={{ width: '100%' }}
                     disabled={isAnimating}
                     onClick={() => { fireMission('Misión Improsible', 'improsible'); setImprosibleExecuted(true) }}
@@ -911,7 +982,7 @@ export function ControlApp() {
 
       {/* ── Iniciar misión ── */}
       {missionModal && state && (
-        <div className="obj-modal-overlay" onClick={() => setMissionModal(false)}>
+        <div className="obj-modal-overlay" onClick={() => { setMissionModal(false); setAllPlay(false) }}>
           <div className="obj-modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
             <div className="obj-modal-header">
               <span className="obj-modal-title">Iniciar misión</span>
@@ -922,36 +993,42 @@ export function ControlApp() {
                 {regularMissions.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
               </select>
             </div>
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {state.participants.map(p => (
-                <div key={p.id} className="field-row">
-                  <span className="field-label" style={{ width: 120, fontSize: 13, color: '#eee' }}>{p.name}</span>
-                  <select
-                    className="field-input"
-                    value={missionAssignments[p.id] ?? 'none'}
-                    onChange={e => setMissionAssignments(prev => ({ ...prev, [p.id]: e.target.value as 'impro' | 'sible' | 'none' }))}
-                  >
-                    <option value="none">No participa</option>
-                    <option value="impro">Equipo A</option>
-                    <option value="sible">Equipo B</option>
-                  </select>
-                </div>
-              ))}
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" id="allPlayCheck" checked={allPlay} onChange={e => setAllPlay(e.target.checked)} />
+              <label htmlFor="allPlayCheck" style={{ fontSize: 13, color: '#eee', cursor: 'pointer' }}>Todos juegan</label>
             </div>
-            {!missionCanStart && Object.keys(missionAssignments).length > 0 && (
+            {!allPlay && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {state.participants.slice(0, state.visibleParticipants).filter(p => !p.eliminated).map(p => (
+                  <div key={p.id} className="field-row">
+                    <span className="field-label" style={{ width: 120, fontSize: 13, color: '#eee' }}>{p.name}</span>
+                    <select
+                      className="field-input"
+                      value={missionAssignments[p.id] ?? 'none'}
+                      onChange={e => setMissionAssignments(prev => ({ ...prev, [p.id]: e.target.value as 'impro' | 'sible' | 'none' }))}
+                    >
+                      <option value="none">No participa</option>
+                      <option value="impro">Equipo A</option>
+                      <option value="sible">Equipo B</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!allPlay && !missionCanStart && Object.keys(missionAssignments).length > 0 && (
               <div style={{ fontSize: 12, color: '#dc2626', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4, padding: '6px 10px' }}>
                 Debe haber al menos un participante en cada equipo.
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-              <button className="btn btn-ghost" onClick={() => setMissionModal(false)}>Cancelar</button>
+              <button className="btn btn-ghost" onClick={() => { setMissionModal(false); setAllPlay(false) }}>Cancelar</button>
               <button
                 className="btn btn-primary"
                 disabled={!missionCanStart}
                 onClick={() => {
-                  const teamImpro = state.participants.filter(p => missionAssignments[p.id] === 'impro').map(p => p.id)
-                  const teamSible = state.participants.filter(p => missionAssignments[p.id] === 'sible').map(p => p.id)
-                  window.electronAPI.updateAppState({ missionView: { active: true, name: missionName, teamImpro, teamSible } })
+                  const teamImpro = allPlay ? [] : state.participants.filter(p => missionAssignments[p.id] === 'impro').map(p => p.id)
+                  const teamSible = allPlay ? [] : state.participants.filter(p => missionAssignments[p.id] === 'sible').map(p => p.id)
+                  window.electronAPI.updateAppState({ missionView: { active: true, name: missionName, teamImpro, teamSible, allPlay } })
                   setMissionModal(false)
                 }}
               >

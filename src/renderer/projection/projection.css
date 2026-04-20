@@ -57,10 +57,86 @@
   opacity: 0;
   pointer-events: none;
 }
+.curtain-logo-wrapper {
+  perspective: 1000px;
+  width: 50vw;
+  height: 50vw;
+  max-height: 75vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.curtain-logo-coin {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
 .curtain-logo {
-  max-width: 60vw;
-  max-height: 80vh;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.curtain-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.curtain-logo-back {
+  transform: rotateY(180deg);
+}
+
+@keyframes mod-fill-pulse {
+  0%, 100% { fill: #fff; }
+  50% { fill: #f97316; }
+}
+
+@keyframes mod-stroke-pulse {
+  0%, 100% { stroke: #fff; }
+  50% { stroke: #f97316; }
+}
+
+.curtain-logo.pulse-enabled .modificable {
+  animation: mod-fill-pulse var(--pulse-duration, 5s) ease-in-out infinite;
+}
+
+.curtain-logo.pulse-enabled .modificable-stroke {
+  animation: mod-stroke-pulse var(--pulse-duration, 5s) ease-in-out infinite;
+}
+
+
+@keyframes logo-wobble {
+  0%   { transform: translateX(0) rotate(0deg); }
+  10%  { transform: translateX(-6px) rotate(-0.6deg); }
+  20%  { transform: translateX(6px) rotate(0.6deg); }
+  30%  { transform: translateX(-5px) rotate(-0.5deg); }
+  40%  { transform: translateX(5px) rotate(0.5deg); }
+  50%  { transform: translateX(-4px) rotate(-0.4deg); }
+  60%  { transform: translateX(4px) rotate(0.4deg); }
+  70%  { transform: translateX(-3px) rotate(-0.3deg); }
+  80%  { transform: translateX(3px) rotate(0.3deg); }
+  90%  { transform: translateX(-1px); }
+  100% { transform: translateX(0) rotate(0deg); }
+}
+
+.curtain-logo-wrapper.wobble-enabled {
+  animation: logo-wobble var(--wobble-duration, 0.35s) ease-in-out infinite;
+}
+
+@keyframes logo-flip-y {
+  from { transform: rotateY(0deg); }
+  to   { transform: rotateY(360deg); }
 }
 
 /* HEADER */
@@ -255,36 +331,24 @@
 }
 
 /* ── MISSION VIEW ── */
-@keyframes team-slide-left {
-  from { opacity: 0; transform: translateX(-8vw); }
-  to   { opacity: 1; transform: translateX(0); }
+@keyframes mission-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
-@keyframes team-slide-right {
-  from { opacity: 0; transform: translateX(8vw); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-@keyframes team-exit-left {
-  from { opacity: 1; transform: translateX(0); }
-  to   { opacity: 0; transform: translateX(-8vw); }
-}
-@keyframes team-exit-right {
-  from { opacity: 1; transform: translateX(0); }
-  to   { opacity: 0; transform: translateX(8vw); }
-}
-@keyframes vs-pop {
-  0%   { opacity: 0; transform: scale(0.4); }
-  60%  { transform: scale(1.15); }
-  100% { opacity: 1; transform: scale(1); }
-}
-@keyframes vs-exit {
-  from { opacity: 1; transform: scale(1); }
-  to   { opacity: 0; transform: scale(0.3); }
+@keyframes mission-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 
 .mission-view {
   background: #111;
   display: flex;
   flex-direction: column;
+  animation: mission-fade-in 1s ease-out both;
+}
+
+.mission-view--exiting {
+  animation: mission-fade-out 1s ease-out both;
 }
 
 .mission-header-bar {
@@ -320,18 +384,17 @@
   gap: 2vh;
 }
 
-.mission-team--impro {
-  animation: team-slide-left 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.mission-team--impro.exiting {
-  animation: team-exit-left 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+.mission-arena--allplay {
+  justify-content: center;
 }
 
-.mission-team--sible {
-  animation: team-slide-right 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+.mission-team--allplay {
+  flex: unset;
+  max-width: 90vw;
 }
-.mission-team--sible.exiting {
-  animation: team-exit-right 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+.mission-team--allplay .mission-team-cards {
+  flex-wrap: wrap;
 }
 
 .mission-team-label {
@@ -405,10 +468,6 @@
   text-shadow: 0 0 20px rgba(249,115,22,0.5), 0 0 40px rgba(249,115,22,0.25);
   letter-spacing: 0.05em;
   flex-shrink: 0;
-  animation: vs-pop 0.6s 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.mission-vs.exiting {
-  animation: vs-exit 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* ── MISSION ANNOUNCEMENT OVERLAY ── */
@@ -730,6 +789,10 @@
   from { opacity: 0; transform: scale(0.92); }
   to   { opacity: 1; transform: scale(1); }
 }
+@keyframes roulette-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
 @keyframes roulette-result-in {
   0%   { opacity: 0; transform: translateY(18px) scale(0.85); }
   60%  { transform: translateY(-4px) scale(1.05); }
@@ -745,6 +808,9 @@
   z-index: 210;
   pointer-events: none;
   animation: roulette-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.roulette-overlay--exiting {
+  animation: roulette-out 0.6s ease-out both;
 }
 
 .roulette-backdrop {
