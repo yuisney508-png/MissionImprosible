@@ -1,6 +1,14 @@
 [
   {
-    "name": "Jessica",
-    "videoPath": "C:\\Users\\camal\\Downloads\\MI_Intro Jessica.mp4"
+    "name": "Intro Jessica",
+    "videoPath": "audio/cinematicas/MI_Intro Jessica.mp4"
+  },
+  {
+    "name": "Intro Mambo",
+    "videoPath": "audio/cinematicas/MI_Intro Mambo.mp4"
+  },
+  {
+    "name": "Intro Martínez",
+    "videoPath": "audio/cinematicas/MI_Intro Martínez.mp4"
   }
 ]

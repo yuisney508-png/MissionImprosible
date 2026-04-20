@@ -38,5 +38,15 @@
     "id": 8,
     "name": "Misión Improsible",
     "audioPath": "audio/misiones/M_Final.wav"
+  },
+  {
+    "id": 9,
+    "name": "Ambientación sonora",
+    "audioPath": "audio/misiones/M_Ambientación Sonora.wav"
+  },
+  {
+    "id": 10,
+    "name": "Protesto",
+    "audioPath": "audio/misiones/M_Protesto.wav"
   }
 ]

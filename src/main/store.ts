@@ -73,7 +73,7 @@ export function getCinematics(): CinematicData[] {
 }
 
 export function saveCinematics(cinematics: CinematicData[]): void {
-  saveJson('cinematics.json', cinematics)
+  saveJson('cinematics.json', cinematics.map(c => ({ ...c, videoPath: toStorablePath(c.videoPath) })))
 }
 
 export function getCinematicAudios(): CinematicAudioData[] {

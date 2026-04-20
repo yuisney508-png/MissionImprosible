@@ -226,7 +226,10 @@ ipcMain.handle('data:save-challenges', (_event, challenges: ChallengeData[]) => 
   saveChallenges(challenges)
 })
 
-ipcMain.handle('data:get-cinematics', () => getCinematics())
+ipcMain.handle('data:get-cinematics', () => {
+  const cinematics = getCinematics()
+  return cinematics.map(c => ({ ...c, videoPath: resolveAudioPath(c.videoPath) }))
+})
 ipcMain.handle('data:save-cinematics', (_event, cinematics: CinematicData[]) => { saveCinematics(cinematics) })
 
 ipcMain.handle('data:get-cinematic-audios', () => {
