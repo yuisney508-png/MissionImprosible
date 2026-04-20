@@ -192,7 +192,7 @@ export function ProjectionApp() {
       const intensity = 0.6 * rms + 0.4 * centroid
       smoothed = smoothed + 0.25 * (intensity - smoothed)
 
-      const duration = 1.0 - smoothed * (1.0 - 0.12)
+      const duration = 2.0 - smoothed * (2.0 - 0.12)
       const amp = 0.3 + smoothed * (1.8 - 0.3)
 
       const el = curtainOverlayRef.current
