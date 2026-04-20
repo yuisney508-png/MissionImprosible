@@ -76,6 +76,8 @@ export function ProjectionApp() {
   const prevCurtainRef = useRef<boolean>(true)
   const prevCinematicRef = useRef<string | null | undefined>(null)
   const curtainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [audioWobbleActive, setAudioWobbleActive] = useState(false)
+  const curtainOverlayRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     if (!state) return
@@ -143,6 +145,100 @@ export function ProjectionApp() {
       setLogoUrl(p ? toLocalFile(p) + '?v=' + state.logoVersion : null)
     })
   }, [state?.logoVersion])
+
+  useEffect(() => {
+    const path = state?.activeCinematicAudio
+    if (!path) return
+    const url = toLocalFile(path)
+    if (!url) return
+
+    const audio = new Audio(url)
+    audio.crossOrigin = 'anonymous'
+    audio.volume = normalizeVolume(volumeRef.current)
+
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    const ctx = new AudioCtx()
+    const source = ctx.createMediaElementSource(audio)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 1024
+    analyser.smoothingTimeConstant = 0.3
+    source.connect(analyser)
+    analyser.connect(ctx.destination)
+
+    const timeBuf = new Uint8Array(analyser.fftSize)
+    const freqBuf = new Uint8Array(analyser.frequencyBinCount)
+    let smoothed = 0
+    let rafId = 0
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(timeBuf)
+      analyser.getByteFrequencyData(freqBuf)
+
+      let sumSq = 0
+      for (let i = 0; i < timeBuf.length; i++) {
+        const v = (timeBuf[i] - 128) / 128
+        sumSq += v * v
+      }
+      const rms = Math.min(1, Math.sqrt(sumSq / timeBuf.length) * 2.5)
+
+      let weighted = 0
+      let total = 0
+      for (let i = 0; i < freqBuf.length; i++) {
+        weighted += i * freqBuf[i]
+        total += freqBuf[i]
+      }
+      const centroid = total > 0 ? (weighted / total) / freqBuf.length : 0
+
+      const intensity = 0.6 * rms + 0.4 * centroid
+      smoothed = smoothed + 0.25 * (intensity - smoothed)
+
+      const duration = 1.0 - smoothed * (1.0 - 0.12)
+      const amp = 0.3 + smoothed * (1.8 - 0.3)
+
+      const el = curtainOverlayRef.current
+      if (el) {
+        el.style.setProperty('--wobble-duration', `${duration.toFixed(3)}s`)
+        el.style.setProperty('--wobble-amp', amp.toFixed(3))
+      }
+
+      rafId = requestAnimationFrame(tick)
+    }
+
+    const handleEnded = () => {
+      window.electronAPI.updateAppState({
+        activeCinematicAudio: null,
+        activeCinematicAudioName: null,
+      })
+    }
+    audio.addEventListener('ended', handleEnded)
+
+    setAudioWobbleActive(true)
+    const startPlayback = () => {
+      audio.play().catch(err => console.warn('[cinematic-audio] play failed', err))
+      rafId = requestAnimationFrame(tick)
+    }
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(startPlayback)
+    } else {
+      startPlayback()
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      audio.removeEventListener('ended', handleEnded)
+      audio.pause()
+      audio.src = ''
+      try { source.disconnect() } catch { /* noop */ }
+      try { analyser.disconnect() } catch { /* noop */ }
+      try { ctx.close() } catch { /* noop */ }
+      const el = curtainOverlayRef.current
+      if (el) {
+        el.style.removeProperty('--wobble-duration')
+        el.style.removeProperty('--wobble-amp')
+      }
+      setAudioWobbleActive(false)
+    }
+  }, [state?.activeCinematicAudio])
 
   useEffect(() => {
     if (!state) return
@@ -579,14 +675,17 @@ export function ProjectionApp() {
 
       {curtainMounted && (
         <div
+          ref={curtainOverlayRef}
           className={`curtain-overlay${curtainVisible ? '' : ' curtain-fade-out'}`}
           style={{
             ['--pulse-duration' as string]: `${state?.curtainPulseDuration ?? 5}s`,
-            ['--wobble-duration' as string]: `${state?.curtainWobbleDuration ?? 0.35}s`,
+            ...(audioWobbleActive
+              ? {}
+              : { ['--wobble-duration' as string]: `${state?.curtainWobbleDuration ?? 0.35}s` }),
           } as React.CSSProperties}
         >
           {svgLogoContent && (
-            <div className={`curtain-logo-wrapper${(state?.curtainWobbleEnabled ?? false) ? ' wobble-enabled' : ''}`}>
+            <div className={`curtain-logo-wrapper${((state?.curtainWobbleEnabled ?? false) || audioWobbleActive) ? ' wobble-enabled' : ''}`}>
               <div
                 className="curtain-logo-coin"
                 style={state?.curtainFlipEnabled ?? true

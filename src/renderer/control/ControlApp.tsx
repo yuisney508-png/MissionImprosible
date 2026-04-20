@@ -1266,8 +1266,16 @@ export function ControlApp() {
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
               <button className="btn btn-ghost" onClick={() => setPlayCinematicAudioConfirm(null)}>Cancelar</button>
               <button className="btn btn-primary" onClick={() => {
-                const { audioPath } = playCinematicAudioConfirm
-                if (audioPath) playAudio(toLocalFile(audioPath)!, state?.volume ?? 100)
+                const { audioPath, name } = playCinematicAudioConfirm
+                if (audioPath) {
+                  window.electronAPI.updateAppState({
+                    curtain: true,
+                    activeCinematic: null,
+                    activeCinematicName: null,
+                    activeCinematicAudio: audioPath,
+                    activeCinematicAudioName: name,
+                  })
+                }
                 setPlayCinematicAudioConfirm(null)
               }}>Reproducir</button>
             </div>

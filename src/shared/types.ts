@@ -27,6 +27,8 @@ export interface AppState {
   curtain?: boolean
   activeCinematic?: string | null
   activeCinematicName?: string | null
+  activeCinematicAudio?: string | null
+  activeCinematicAudioName?: string | null
   logoVersion?: number
   rouletteTickBase?: number
   rouletteTickRange?: number
