@@ -4,10 +4,10 @@
   "rouletteTickBase": 1170,
   "rouletteTickRange": 70,
   "curtainFlipEnabled": false,
-  "curtainFlipDuration": 6.5,
+  "curtainFlipDuration": 6,
   "curtainPulseEnabled": false,
-  "curtainPulseDuration": 9.5,
+  "curtainPulseDuration": 10,
   "curtainLogoColor": "white",
   "curtainWobbleEnabled": false,
-  "curtainWobbleDuration": 0.55
+  "curtainWobbleDuration": 0.1
 }
