@@ -99,12 +99,20 @@
 
 @keyframes mod-fill-pulse {
   0%, 100% { fill: #fff; }
-  50% { fill: #f97316; }
+  50% { fill: var(--pulse-color, #ff5500); }
 }
 
 @keyframes mod-stroke-pulse {
   0%, 100% { stroke: #fff; }
-  50% { stroke: #f97316; }
+  50% { stroke: var(--pulse-color, #ff5500); }
+}
+
+.curtain-logo .modificable {
+  fill: var(--pulse-color, #ff5500);
+}
+
+.curtain-logo .modificable-stroke {
+  stroke: var(--pulse-color, #ff5500);
 }
 
 .curtain-logo.pulse-enabled .modificable {
@@ -159,7 +167,7 @@
 }
 
 .title-mision { color: #ffffff; }
-.title-impro  { color: #f97316; }
+.title-impro  { color: #ff5500; }
 .title-sible  { color: #ffffff; }
 
 .header-logo {
@@ -301,23 +309,6 @@
   font-weight: 900;
   padding: 1vh 0;
   line-height: 1;
-}
-
-@keyframes card-shake {
-  0%   { transform: translateX(0); }
-  10%  { transform: translateX(-10px) rotate(-1deg); }
-  22%  { transform: translateX(10px) rotate(1deg); }
-  34%  { transform: translateX(-8px); }
-  46%  { transform: translateX(8px); }
-  58%  { transform: translateX(-5px); }
-  70%  { transform: translateX(5px); }
-  82%  { transform: translateX(-2px); }
-  100% { transform: translateX(0); }
-}
-
-.participant-card--shake,
-.mission-card--shake {
-  animation: card-shake 0.6s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
 @keyframes score-pop-projection {
@@ -782,6 +773,418 @@
 @keyframes rating-out {
   0%   { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(0.7); }
+}
+
+/* ═══════════════════════════════════════════
+   MISIÓN IMPROSIBLE — OVERLAYS
+═══════════════════════════════════════════ */
+
+/* ── Fase B: Cañón 007 ── */
+.improsible-barrel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  background: #000;
+  overflow: hidden;
+}
+
+.barrel-blood {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #7f0000 0%, #3f0000 100%);
+  transform: scaleY(0);
+  transform-origin: top center;
+  /* aparece cuando el segundo agente sale a t=2s, dura 0.5s */
+  animation: barrel-blood-drop 0.5s 2.1s ease-in forwards;
+  z-index: 1;
+}
+
+@keyframes barrel-blood-drop {
+  0%   { transform: scaleY(0); }
+  100% { transform: scaleY(1); }
+}
+
+.barrel-circle {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  /* barrido inicial de 1.5s, luego cierra en t=2.8s → t=3s */
+  animation: barrel-sweep 3s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+  clip-path: circle(45vh at 10vw 50vh);
+}
+
+@keyframes barrel-sweep {
+  0%   { clip-path: circle(45vh at 10vw 50vh); }
+  50%  { clip-path: circle(45vh at 50vw 50vh); }
+  93%  { clip-path: circle(45vh at 50vw 50vh); }
+  100% { clip-path: circle(0vh at 50vw 50vh); }
+}
+
+.barrel-stage {
+  position: absolute;
+  inset: 0;
+  background: #1a0000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.barrel-finalist {
+  position: absolute;
+  width: 55vh;
+  height: 55vh;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+/*
+  Nueva coreografía — cada elemento visible 1s centrado, fase total 3s:
+  Agente A: duración 1s, delay 0s.   0%→20% entrada (200ms), 20%→80% pausa (600ms), 80%→100% salida (200ms).
+  Agente B: duración 1s, delay 1s.   espejo.
+  Pantalla vacía: 2s → 2s (100ms margen antes del logo).
+  Logo: delay 2s, duración 0.5s → visible hasta que el círculo cierra a t=3s.
+*/
+
+.barrel-finalist--a {
+  /* duración 1s, delay 0 */
+  animation: barrel-walk-a 1s ease-in-out 0s both;
+}
+
+.barrel-finalist--b {
+  /* duración 1s, delay 1s (cuando A termina) */
+  animation: barrel-walk-b 1s ease-in-out 1s both;
+}
+
+@keyframes barrel-walk-a {
+  0%   { transform: translateX(110vw); }
+  20%  { transform: translateX(0); }
+  80%  { transform: translateX(0); }
+  100% { transform: translateX(-110vw); }
+}
+
+@keyframes barrel-walk-b {
+  0%   { transform: translateX(-110vw); }
+  20%  { transform: translateX(0); }
+  80%  { transform: translateX(0); }
+  100% { transform: translateX(110vw); }
+}
+
+.barrel-agency-logo {
+  position: absolute;
+  width: 35vh;
+  height: 35vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* aparece a t=2s, fade-in rápido en 0.5s, visible hasta que el círculo cierra */
+  animation: barrel-logo-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 2s both;
+}
+
+.barrel-agency-logo svg {
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes barrel-logo-in {
+  0%   { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ── Fase D: VS pulsante ── */
+.improsible-vs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.improsible-vs-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.96);
+  animation: vs-bg-in 0.5s ease both;
+}
+
+@keyframes vs-bg-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.improsible-vs-label {
+  position: absolute;
+  top: 6vh;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: clamp(24px, 3vw, 48px);
+  font-weight: 700;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  text-shadow: 0 0 20px rgba(220, 38, 38, 0.7), 0 2px 4px rgba(0, 0, 0, 0.9);
+  z-index: 1;
+  animation: vs-label-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+}
+
+@keyframes vs-label-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.improsible-vs-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  gap: 0;
+}
+
+.improsible-finalist-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  padding: 4vh 3vw;
+}
+
+.improsible-finalist-card--a {
+  animation: finalist-slide-in-left 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
+}
+
+.improsible-finalist-card--b {
+  animation: finalist-slide-in-right 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
+}
+
+@keyframes finalist-slide-in-left {
+  from { opacity: 0; transform: translateX(-8vw); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes finalist-slide-in-right {
+  from { opacity: 0; transform: translateX(8vw); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.improsible-finalist-photo {
+  width: 28vh;
+  height: 28vh;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 0.5vh solid #dc2626;
+  box-shadow: 0 0 4vh rgba(220, 38, 38, 0.5);
+}
+
+.improsible-finalist-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.improsible-finalist-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #374151;
+  font-size: 6vh;
+  font-weight: 900;
+  color: #9ca3af;
+}
+
+.improsible-finalist-name {
+  font-size: clamp(18px, 3.5vw, 52px);
+  font-weight: 900;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.improsible-vs-center {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.improsible-vs-word {
+  color: #dc2626;
+  font-size: 14vw;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  animation: vs-pulse 0.9s ease-in-out infinite, vs-word-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.4s both;
+  text-shadow: 0 0 40px rgba(220,38,38,0.8), 0 0 80px rgba(220,38,38,0.5);
+}
+
+@keyframes vs-pulse {
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%       { transform: scale(1.15); filter: brightness(1.4); }
+}
+
+@keyframes vs-word-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ═══════════════════════════════════════════
+   MISIÓN IMPROSIBLE — FASE E: GANADOR
+═══════════════════════════════════════════ */
+
+.improsible-winner-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 235;
+  background: radial-gradient(ellipse at center, #1a0a00 0%, #000 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Confetti */
+.winner-confetti-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -5vh;
+  border-radius: 1px;
+  animation-name: confetti-fall-v0;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+.confetti-piece--circle {
+  border-radius: 50%;
+}
+
+.confetti-piece--v1 { animation-name: confetti-fall-v1; }
+.confetti-piece--v2 { animation-name: confetti-fall-v2; }
+
+@keyframes confetti-fall-v0 {
+  0%   { transform: translateY(-10vh) rotate(0deg);   opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg); opacity: 0.8; }
+}
+
+@keyframes confetti-fall-v1 {
+  0%   { transform: translateY(-10vh) translateX(0)     rotate(0deg);   opacity: 1; }
+  33%  { transform: translateY(37vh)  translateX(-3vw)  rotate(240deg); }
+  66%  { transform: translateY(74vh)  translateX(2vw)   rotate(480deg); }
+  100% { transform: translateY(110vh) translateX(-1vw)  rotate(720deg); opacity: 0.8; }
+}
+
+@keyframes confetti-fall-v2 {
+  0%   { transform: translateY(-10vh) translateX(0)    rotate(0deg);   opacity: 1; }
+  33%  { transform: translateY(37vh)  translateX(4vw)  rotate(240deg); }
+  66%  { transform: translateY(74vh)  translateX(-2vw) rotate(480deg); }
+  100% { transform: translateY(110vh) translateX(3vw)  rotate(720deg); opacity: 0.8; }
+}
+
+/* Stage wrapper absorbe la animación de entrada */
+.winner-stage-wrapper {
+  position: relative;
+  z-index: 1;
+  animation: winner-stage-enter 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes winner-stage-enter {
+  from { opacity: 0; transform: scale(0); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Stage: pulso infinito después de la entrada */
+.winner-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3vh;
+  animation: winner-pulse 1.4s ease-in-out 0.7s infinite;
+}
+
+@keyframes winner-pulse {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 20px rgba(250,204,21,0.6)); }
+  50%       { transform: scale(1.12); filter: drop-shadow(0 0 60px rgba(250,204,21,1)); }
+}
+
+.winner-photo-ring {
+  width: 40vh;
+  height: 40vh;
+  border-radius: 50%;
+  border: 0.8vh solid #facc15;
+  box-shadow: 0 0 6vh rgba(250,204,21,0.7), inset 0 0 3vh rgba(250,204,21,0.2);
+  overflow: hidden;
+  position: relative;
+}
+
+.winner-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.winner-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #374151;
+  font-size: 12vh;
+  font-weight: 900;
+  color: #facc15;
+}
+
+.winner-name {
+  font-size: clamp(28px, 5vw, 80px);
+  font-weight: 900;
+  color: #fff;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 30px rgba(250,204,21,0.6), 0 2px 8px rgba(0,0,0,0.9);
+}
+
+.winner-label {
+  font-size: clamp(32px, 7vw, 100px);
+  font-weight: 900;
+  font-style: italic;
+  color: #facc15;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-shadow:
+    0 0 40px rgba(250,204,21,0.9),
+    0 0 80px rgba(250,204,21,0.6),
+    3px 3px 0 rgba(0,0,0,0.8);
+}
+
+.winner-sublabel {
+  font-size: clamp(18px, 3.2vw, 48px);
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.35em;
+  margin-top: 0.4em;
+  text-shadow:
+    0 0 20px rgba(250,204,21,0.6),
+    2px 2px 0 rgba(0,0,0,0.7);
 }
 
 /* ── ROULETTE OVERLAY ── */

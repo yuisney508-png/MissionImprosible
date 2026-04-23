@@ -8,7 +8,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'localfile', privileges: { secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
 ])
 import { AppState, Participant } from '../shared/types'
-import { getMissions, saveMissions, getObjectives, saveObjectives, getChallenges, saveChallenges, getCinematics, saveCinematics, getCinematicAudios, saveCinematicAudios, getSounds, resolveAudioPath, getSettings, saveSettings, getSvgLogoPath, getSvgLogoOrangePath } from './store'
+import { getMissions, saveMissions, getObjectives, saveObjectives, getChallenges, saveChallenges, getCinematics, saveCinematics, getCinematicAudios, saveCinematicAudios, getSounds, resolveAudioPath, getSettings, saveSettings, getSvgLogoPath, getSvgLogoOrangePath, deleteDataFile } from './store'
 import { MissionData, ObjectiveData, ChallengeData, CinematicData, CinematicAudioData } from '../shared/types'
 
 let controlWindow: BrowserWindow | null = null
@@ -36,17 +36,19 @@ let appState: AppState = {
   curtainFlipDuration: savedSettings.curtainFlipDuration,
   curtainPulseEnabled: savedSettings.curtainPulseEnabled,
   curtainPulseDuration: savedSettings.curtainPulseDuration,
+  curtainPulseColor: savedSettings.curtainPulseColor,
   curtainLogoColor: savedSettings.curtainLogoColor,
   curtainWobbleEnabled: savedSettings.curtainWobbleEnabled,
   curtainWobbleDuration: savedSettings.curtainWobbleDuration,
+  missionPreloads: savedSettings.missionPreloads,
   curtain: true,
 }
 
 function createControlWindow() {
   controlWindow = new BrowserWindow({
-    width: 1280,
+    width: 1500,
     height: 960,
-    minWidth: 1100,
+    minWidth: 1320,
     minHeight: 800,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -113,7 +115,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 
 ipcMain.on('state:get', (event) => { event.sender.send('state:update', appState) })
-const PERSISTED_KEYS: (keyof AppState)[] = ['volume', 'overlayOpacity', 'rouletteTickBase', 'rouletteTickRange', 'curtainFlipEnabled', 'curtainFlipDuration', 'curtainPulseEnabled', 'curtainPulseDuration', 'curtainLogoColor', 'curtainWobbleEnabled', 'curtainWobbleDuration']
+const PERSISTED_KEYS: (keyof AppState)[] = ['volume', 'overlayOpacity', 'rouletteTickBase', 'rouletteTickRange', 'curtainFlipEnabled', 'curtainFlipDuration', 'curtainPulseEnabled', 'curtainPulseDuration', 'curtainPulseColor', 'curtainLogoColor', 'curtainWobbleEnabled', 'curtainWobbleDuration', 'missionPreloads']
 
 ipcMain.on('appstate:update', (_event, update: Partial<AppState>) => {
   appState = { ...appState, ...update }
@@ -128,9 +130,11 @@ ipcMain.on('appstate:update', (_event, update: Partial<AppState>) => {
       curtainFlipDuration: appState.curtainFlipDuration ?? 10,
       curtainPulseEnabled: appState.curtainPulseEnabled ?? true,
       curtainPulseDuration: appState.curtainPulseDuration ?? 5,
+      curtainPulseColor: appState.curtainPulseColor ?? '#ff5500',
       curtainLogoColor: appState.curtainLogoColor ?? 'white',
       curtainWobbleEnabled: appState.curtainWobbleEnabled ?? false,
       curtainWobbleDuration: appState.curtainWobbleDuration ?? 0.35,
+      missionPreloads: appState.missionPreloads ?? {},
     })
   }
 })
@@ -192,8 +196,24 @@ ipcMain.on('rating:clear', () => {
   broadcastToRenderers('rating:clear')
 })
 
-ipcMain.on('roulette:start', (_event, payload: { winnerIndex: number; challenges: string[] }) => {
+ipcMain.on('roulette:start', (_event, payload: { winnerIndex: number; challenges: string[]; skipAnimation?: boolean }) => {
   broadcastToRenderers('roulette:start', payload)
+})
+
+ipcMain.on('improsible:start', (_event, payload: { finalistIds: [string, string] }) => {
+  appState = { ...appState, improsibleFinalists: payload.finalistIds }
+  const audioPath = resolveAudioPath('audio/misiones/M_Final.wav')
+  broadcastToRenderers('improsible:start', { ...payload, audioPath })
+})
+
+ipcMain.on('improsible:final-start', (_event, payload: { winnerId: string }) => {
+  appState = { ...appState, improsibleWinner: payload.winnerId }
+  broadcastToRenderers('improsible:final-start', payload)
+})
+
+ipcMain.on('improsible:clear', () => {
+  appState = { ...appState, improsibleFinalists: null, improsibleWinner: null }
+  broadcastToRenderers('improsible:clear')
 })
 
 ipcMain.handle('data:get-missions', () => {
@@ -237,6 +257,8 @@ ipcMain.handle('data:get-cinematic-audios', () => {
   return audios.map(a => ({ ...a, audioPath: resolveAudioPath(a.audioPath) }))
 })
 ipcMain.handle('data:save-cinematic-audios', (_event, audios: CinematicAudioData[]) => { saveCinematicAudios(audios) })
+
+ipcMain.handle('file:delete', (_event, storedPath: string | null) => deleteDataFile(storedPath))
 
 ipcMain.handle('file:select-video', async () => {
   if (!controlWindow) return null

@@ -1,7 +1,7 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import { app } from 'electron'
-import { MissionData, ObjectiveData, ChallengeData, CinematicData, CinematicAudioData } from '../shared/types'
+import { MissionData, ObjectiveData, ChallengeData, CinematicData, CinematicAudioData, MissionPreload } from '../shared/types'
 
 export function getDataDir(): string {
   return app.isPackaged
@@ -13,6 +13,24 @@ export function resolveAudioPath(audioPath: string | null): string | null {
   if (!audioPath) return null
   if (path.isAbsolute(audioPath)) return audioPath
   return path.join(getDataDir(), audioPath)
+}
+
+export function deleteDataFile(storedPath: string | null): boolean {
+  if (!storedPath) return false
+  const resolved = resolveAudioPath(storedPath)
+  if (!resolved) return false
+  const dataDir = getDataDir()
+  const rel = path.relative(dataDir, resolved)
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false
+  try {
+    if (fs.existsSync(resolved)) {
+      fs.unlinkSync(resolved)
+      return true
+    }
+  } catch (err) {
+    console.error('[store] deleteDataFile failed', resolved, err)
+  }
+  return false
 }
 
 /**
@@ -93,9 +111,11 @@ export interface Settings {
   curtainFlipDuration: number
   curtainPulseEnabled: boolean
   curtainPulseDuration: number
+  curtainPulseColor: string
   curtainLogoColor: 'white' | 'orange'
   curtainWobbleEnabled: boolean
   curtainWobbleDuration: number
+  missionPreloads: Record<string, MissionPreload>
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -107,9 +127,11 @@ const SETTINGS_DEFAULTS: Settings = {
   curtainFlipDuration: 10,
   curtainPulseEnabled: true,
   curtainPulseDuration: 5,
+  curtainPulseColor: '#ff5500',
   curtainLogoColor: 'white',
   curtainWobbleEnabled: false,
   curtainWobbleDuration: 0.35,
+  missionPreloads: {},
 }
 
 export function getSettings(): Settings {

@@ -6,8 +6,25 @@
   "curtainFlipEnabled": false,
   "curtainFlipDuration": 6,
   "curtainPulseEnabled": false,
-  "curtainPulseDuration": 10,
+  "curtainPulseDuration": 6,
+  "curtainPulseColor": "#f97316",
   "curtainLogoColor": "white",
   "curtainWobbleEnabled": false,
-  "curtainWobbleDuration": 0.1
+  "curtainWobbleDuration": 0.1,
+  "missionPreloads": {
+    "Protesto": {
+      "allPlay": false,
+      "assignments": {
+        "1": "impro",
+        "2": "sible"
+      }
+    },
+    "Lugares secretos": {
+      "allPlay": false,
+      "assignments": {
+        "1": "impro",
+        "2": "sible"
+      }
+    }
+  }
 }

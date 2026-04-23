@@ -1,8 +1,8 @@
 [
   {
     "id": 1,
-    "name": "Switch de agentes",
-    "audioPath": "audio/misiones/M_Switch.wav"
+    "name": "Protesto",
+    "audioPath": "audio/misiones/M_Protesto.wav"
   },
   {
     "id": 2,
@@ -36,17 +36,12 @@
   },
   {
     "id": 8,
-    "name": "Misión Improsible",
-    "audioPath": "audio/misiones/M_Final.wav"
+    "name": "Switch de agentes",
+    "audioPath": "audio/misiones/M_Switch.wav"
   },
   {
     "id": 9,
     "name": "Ambientación sonora",
     "audioPath": "audio/misiones/M_Ambientación Sonora.wav"
-  },
-  {
-    "id": 10,
-    "name": "Protesto",
-    "audioPath": "audio/misiones/M_Protesto.wav"
   }
 ]

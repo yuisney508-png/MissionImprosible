@@ -40,6 +40,7 @@ function toVideoSrc(absPath: string | null): string | null {
 }
 
 
+
 export function ProjectionApp() {
   const [state, setState] = useState<AppState | null>(null)
   const [announcement, setAnnouncement] = useState<string | null>(null)
@@ -47,8 +48,6 @@ export function ProjectionApp() {
   const [missionAnnouncingOut, setMissionAnnouncingOut] = useState(false)
   const [scoreFlash, setScoreFlash] = useState<Record<string, number>>({})
   const prevScoresRef = useRef<Record<string, number>>({})
-  const [elimShake, setElimShake] = useState<Record<string, number>>({})
-  const prevEliminatedRef = useRef<Record<string, boolean>>({})
   const [missionExiting, setMissionExiting] = useState(false)
   const lastMissionRef = useRef<NonNullable<AppState['missionView']> | null>(null)
   const volumeRef = useRef<number>(100)
@@ -68,6 +67,7 @@ export function ProjectionApp() {
   const challengeNamesRef = useRef<string[]>(CHALLENGES)
   const rouletteNamesRef = useRef<string[]>([])
   const soundObjetivoRef = useRef<string | null>(null)
+  const soundPuntajeRef = useRef<string | null>(null)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [svgLogoContent, setSvgLogoContent] = useState<string | null>(null)
   const [svgLogoOrangeContent, setSvgLogoOrangeContent] = useState<string | null>(null)
@@ -78,6 +78,12 @@ export function ProjectionApp() {
   const curtainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [audioWobbleActive, setAudioWobbleActive] = useState(false)
   const curtainOverlayRef = useRef<HTMLDivElement>(null)
+
+  // Improsible finale state
+  const [improsiblePhase, setImprosiblePhase] = useState<null | 'title' | 'barrel' | 'vs' | 'final'>(null)
+  const [improsibleFinalists, setImprosibleFinalists] = useState<[string, string] | null>(null)
+  const [improsibleWinnerId, setImprosibleWinnerId] = useState<string | null>(null)
+  const improsibleTimers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   useLayoutEffect(() => {
     if (!state) return
@@ -131,6 +137,7 @@ export function ProjectionApp() {
     })
     ;window.electronAPI.getSounds().then((sounds: Record<string, string | null>) => {
       soundObjetivoRef.current = toLocalFile(sounds.objetivo ?? null)
+      soundPuntajeRef.current = toLocalFile(sounds.puntaje ?? null)
     })
     ;window.electronAPI.getLogoPath().then((p: string | null) => {
       setLogoUrl(toLocalFile(p))
@@ -242,21 +249,6 @@ export function ProjectionApp() {
 
   useEffect(() => {
     if (!state) return
-    const prevElim = prevEliminatedRef.current
-    const shakeUpdates: Record<string, number> = {}
-    for (const p of state.participants) {
-      if (!prevElim[p.id] && p.eliminated) {
-        shakeUpdates[p.id] = (elimShake[p.id] ?? 0) + 1
-      }
-      prevElim[p.id] = !!p.eliminated
-    }
-    if (Object.keys(shakeUpdates).length > 0) {
-      setElimShake(f => ({ ...f, ...shakeUpdates }))
-    }
-  }, [state?.participants])
-
-  useEffect(() => {
-    if (!state) return
     const prev = prevScoresRef.current
     const updates: Record<string, number> = {}
     for (const p of state.participants) {
@@ -298,6 +290,8 @@ export function ProjectionApp() {
     const unsub = window.electronAPI.onShowRatings((r) => {
       setRatingsExiting(false)
       setActiveRatings(r)
+      const hasScored = Object.values(r).some(v => v === 'excelente' || v === 'aceptable' || v === 'regular')
+      if (hasScored && soundPuntajeRef.current) playAudio(soundPuntajeRef.current, volumeRef.current)
     })
     return unsub
   }, [])
@@ -472,14 +466,129 @@ export function ProjectionApp() {
     return () => cancelAnimationFrame(rouletteAnimRef.current)
   }, [rouletteVisible, drawWheel])
 
+  const improsibleAudioRef = useRef<HTMLAudioElement | null>(null)
+  const improsibleAudioCleanupRef = useRef<(() => void) | null>(null)
+
   useEffect(() => {
-    const unsub = window.electronAPI.onRouletteStart((winnerIndex: number, challenges: string[]) => {
+    const clearTimers = () => {
+      improsibleTimers.current.forEach(clearTimeout)
+      improsibleTimers.current = []
+    }
+    const clearAudio = () => {
+      // Ejecutar el cleanup del listener antes de detener el audio
+      if (improsibleAudioCleanupRef.current) {
+        improsibleAudioCleanupRef.current()
+        improsibleAudioCleanupRef.current = null
+      }
+      if (improsibleAudioRef.current) {
+        improsibleAudioRef.current.pause()
+        improsibleAudioRef.current.currentTime = 0
+        improsibleAudioRef.current = null
+      }
+    }
+    const startBarrelPhase = () => {
+      // barrel: 3s (1s A + 1s B + 1s logo) | vs: después de barrel
+      const t2 = setTimeout(() => setImprosiblePhase('vs'), 3000)
+      improsibleTimers.current.push(t2)
+      setImprosiblePhase('barrel')
+    }
+    const unsub = window.electronAPI.onImprosibleStart((finalistIds, audioPath) => {
+      clearTimers()
+      clearAudio()
+      setImprosibleFinalists(finalistIds)
+      setImprosiblePhase('title')
+      // Reproducir M_Final.wav; transición a barrel al terminar el audio
+      const FALLBACK_MS = 5000
+      if (audioPath) {
+        const audioUrl = toLocalFile(audioPath)
+        if (audioUrl) {
+          const audio = playAudio(audioUrl, volumeRef.current)
+          improsibleAudioRef.current = audio
+          let barrelStarted = false
+          const goBarrel = () => {
+            if (barrelStarted) return
+            barrelStarted = true
+            startBarrelPhase()
+          }
+          // Fallback: si el audio no termina en un tiempo razonable, avanzar igual
+          const tFallback = setTimeout(goBarrel, 60000)
+          improsibleTimers.current.push(tFallback)
+          const onError = () => {
+            clearTimeout(tFallback)
+            const idx = improsibleTimers.current.indexOf(tFallback)
+            if (idx !== -1) improsibleTimers.current.splice(idx, 1)
+            const t = setTimeout(goBarrel, FALLBACK_MS)
+            improsibleTimers.current.push(t)
+          }
+          audio.addEventListener('ended', goBarrel)
+          audio.addEventListener('error', onError)
+          // Guardar cleanup para poder remover los listeners al limpiar
+          improsibleAudioCleanupRef.current = () => {
+            barrelStarted = true // evitar que goBarrel dispare tras cleanup
+            audio.removeEventListener('ended', goBarrel)
+            audio.removeEventListener('error', onError)
+            clearTimeout(tFallback)
+          }
+          return
+        }
+      }
+      // Sin audio: fallback directo
+      const t1 = setTimeout(startBarrelPhase, FALLBACK_MS)
+      improsibleTimers.current = [t1]
+    })
+    return () => { clearTimers(); clearAudio(); unsub() }
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onImprosibleClear(() => {
+      improsibleTimers.current.forEach(clearTimeout)
+      improsibleTimers.current = []
+      if (improsibleAudioRef.current) {
+        improsibleAudioRef.current.pause()
+        improsibleAudioRef.current = null
+      }
+      setImprosiblePhase(null)
+      setImprosibleFinalists(null)
+      setImprosibleWinnerId(null)
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onImprosibleFinalStart((winnerId) => {
+      setImprosibleWinnerId(winnerId)
+      setImprosiblePhase('final')
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.onRouletteStart((winnerIndex: number, challenges: string[], skipAnimation: boolean) => {
       cancelAnimationFrame(rouletteAnimRef.current)
       rouletteNamesRef.current = challenges
       rouletteTargetRef.current = winnerIndex
-      setRouletteWinner(null)
-      setRouletteRevealed(false)
-      setRouletteVisible(true)
+      if (skipAnimation) {
+        setRouletteWinner(winnerIndex)
+        setRouletteRevealed(true)
+        setRouletteVisible(false)
+        const sfxUrl = challengeSfxMapRef.current[challenges[winnerIndex]]
+        const hideReveal = (delay: number) => {
+          const FADE = 600
+          setTimeout(() => setRouletteExiting(true), Math.max(delay - FADE, 0))
+          setTimeout(() => { setRouletteWinner(null); setRouletteRevealed(false); setRouletteExiting(false) }, delay)
+        }
+        if (sfxUrl) {
+          playAudioTimed(sfxUrl, volumeRef.current, (remaining) => {
+            hideReveal(remaining > 200 ? remaining : 5000)
+          })
+        } else {
+          hideReveal(5000)
+        }
+      } else {
+        setRouletteWinner(null)
+        setRouletteRevealed(false)
+        setRouletteVisible(true)
+      }
     })
     return () => { unsub(); cancelAnimationFrame(rouletteAnimRef.current) }
   }, [])
@@ -489,7 +598,7 @@ export function ProjectionApp() {
   const mv = state.missionView?.active ? state.missionView : (missionExiting ? lastMissionRef.current : null)
 
   if (mv?.active || missionExiting) {
-    const activePlayers = new Set(state.participants.slice(0, state.visibleParticipants).filter(p => !p.eliminated).map(p => p.id))
+    const activePlayers = new Set(state.participants.slice(0, state.visibleParticipants).map(p => p.id))
     const activeList = state.participants.filter(p => activePlayers.has(p.id))
 
     if (mv!.allPlay) {
@@ -507,7 +616,7 @@ export function ProjectionApp() {
             <div className="mission-team mission-team--allplay">
               <div className="mission-team-cards">
                 {activeList.map(p => (
-                  <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`mission-card${elimShake[p.id] ? ' mission-card--shake' : ''}`}>
+                  <div key={p.id} className="mission-card">
                     <div className="mission-card-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
                       {p.photoPath
                         ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
@@ -542,10 +651,9 @@ export function ProjectionApp() {
         </div>
         <div className="mission-arena">
           <div className="mission-team mission-team--impro">
-            <div className="mission-team-label"><span className="team-label-impro">EQUIPO A</span></div>
             <div className="mission-team-cards">
               {impro.map(p => (
-                <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`mission-card${elimShake[p.id] ? ' mission-card--shake' : ''}`}>
+                <div key={p.id} className="mission-card">
                   <div className="mission-card-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
                     {p.photoPath
                       ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
@@ -565,10 +673,9 @@ export function ProjectionApp() {
           <div className="mission-vs">VS</div>
 
           <div className="mission-team mission-team--sible">
-            <div className="mission-team-label"><span className="team-label-sible">EQUIPO B</span></div>
             <div className="mission-team-cards">
               {sible.map(p => (
-                <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`mission-card${elimShake[p.id] ? ' mission-card--shake' : ''}`}>
+                <div key={p.id} className="mission-card">
                   <div className="mission-card-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
                     {p.photoPath
                       ? <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
@@ -606,7 +713,7 @@ export function ProjectionApp() {
 
       <div className="participants">
         {state.participants.slice(0, state.visibleParticipants).map(p => (
-          <div key={`${p.id}-${elimShake[p.id] ?? 0}`} className={`participant-card${elimShake[p.id] ? ' participant-card--shake' : ''}`}>
+          <div key={p.id} className="participant-card">
             <div className="participant-photo" style={{ filter: p.eliminated ? 'grayscale(100%)' : 'none', transition: 'filter 0.4s' }}>
               {p.photoPath ? (
                 <img src={toLocalFile(p.photoPath) ?? ''} alt={p.name} />
@@ -679,6 +786,7 @@ export function ProjectionApp() {
           className={`curtain-overlay${curtainVisible ? '' : ' curtain-fade-out'}`}
           style={{
             ['--pulse-duration' as string]: `${state?.curtainPulseDuration ?? 5}s`,
+            ['--pulse-color' as string]: state?.curtainPulseColor ?? '#ff5500',
             ...(audioWobbleActive
               ? {}
               : { ['--wobble-duration' as string]: `${state?.curtainWobbleDuration ?? 0.35}s` }),
@@ -701,25 +809,145 @@ export function ProjectionApp() {
       )}
 
       {missionAnnouncement && (
-        missionAnnouncement === 'Misión Improsible' ? (
-          <div key="final" className={`mission-final-overlay${missionAnnouncingOut ? ' exiting' : ''}`}>
-            <div className="mission-final-bg" style={{ background: 'rgba(0,0,0,0.95)' }} />
-            <div className="mission-final-content">
-              <div className="mission-final-caption">Misión Final</div>
-              <div className="mission-final-rule" />
-              <div className="mission-final-word mission-final-word--1">MISIÓN</div>
-              <div className="mission-final-word mission-final-word--2">IMPROSIBLE</div>
-              <div className="mission-final-rule mission-final-rule--2" />
+        <div key={missionAnnouncement} className={`mission-announce-overlay${missionAnnouncingOut ? ' exiting' : ''}`}>
+          <div className="mission-announce-backdrop" style={{ background: `rgba(0,0,0,${(state.overlayOpacity ?? 80) / 100})` }} />
+          <div className="mission-announce-subtitle">Siguiente misión</div>
+          <div className="mission-announce-name">{missionAnnouncement.toUpperCase()}</div>
+        </div>
+      )}
+
+      {/* ── Fase A: título Misión Improsible ── */}
+      {improsiblePhase === 'title' && (
+        <div key="improsible-title" className="mission-final-overlay">
+          <div className="mission-final-bg" style={{ background: 'rgba(0,0,0,0.95)' }} />
+          <div className="mission-final-content">
+            <div className="mission-final-caption">Misión Final</div>
+            <div className="mission-final-rule" />
+            <div className="mission-final-word mission-final-word--1">MISIÓN</div>
+            <div className="mission-final-word mission-final-word--2">IMPROSIBLE</div>
+            <div className="mission-final-rule mission-final-rule--2" />
+          </div>
+        </div>
+      )}
+
+      {/* ── Fase B: cañón 007 ── */}
+      {improsiblePhase === 'barrel' && improsibleFinalists && (() => {
+        const fa = state.participants.find(p => p.id === improsibleFinalists[0])
+        const fb = state.participants.find(p => p.id === improsibleFinalists[1])
+        return (
+          <div className="improsible-barrel-overlay">
+            <div className="barrel-blood" />
+            <div className="barrel-circle">
+              <div className="barrel-stage">
+                {fa?.photoPath && (
+                  <img
+                    className="barrel-finalist barrel-finalist--a"
+                    src={toLocalFile(fa.photoPath) ?? ''}
+                    alt={fa.name}
+                  />
+                )}
+                {fb?.photoPath && (
+                  <img
+                    className="barrel-finalist barrel-finalist--b"
+                    src={toLocalFile(fb.photoPath) ?? ''}
+                    alt={fb.name}
+                  />
+                )}
+                {svgLogoContent && (
+                  <div
+                    className="barrel-agency-logo"
+                    dangerouslySetInnerHTML={{ __html: svgLogoContent }}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        ) : (
-          <div key={missionAnnouncement} className={`mission-announce-overlay${missionAnnouncingOut ? ' exiting' : ''}`}>
-            <div className="mission-announce-backdrop" style={{ background: `rgba(0,0,0,${(state.overlayOpacity ?? 80) / 100})` }} />
-            <div className="mission-announce-subtitle">Siguiente misión</div>
-            <div className="mission-announce-name">{missionAnnouncement.toUpperCase()}</div>
+        )
+      })()}
+
+      {/* ── Fase E: Ganador ── */}
+      {improsiblePhase === 'final' && improsibleWinnerId && (() => {
+        const winner = state.participants.find(p => p.id === improsibleWinnerId)
+        const confetti = Array.from({ length: 50 }, (_, i) => ({
+          i,
+          left: Math.random() * 100,
+          color: ['#facc15','#ef4444','#3b82f6','#10b981','#ec4899','#fbbf24'][i % 6],
+          delay: -(Math.random() * 3),
+          duration: 2.5 + Math.random() * 2,
+          rotate: Math.random() * 360,
+          width: 8 + Math.floor(Math.random() * 6),
+          height: 12 + Math.floor(Math.random() * 8),
+          circular: i % 5 === 0,
+          variant: i % 3,
+        }))
+        return (
+          <div className="improsible-winner-overlay">
+            <div className="winner-confetti-container">
+              {confetti.map(c => (
+                <span
+                  key={c.i}
+                  className={`confetti-piece confetti-piece--v${c.variant}${c.circular ? ' confetti-piece--circle' : ''}`}
+                  style={{
+                    left: `${c.left}vw`,
+                    background: c.color,
+                    animationDelay: `${c.delay}s`,
+                    animationDuration: `${c.duration}s`,
+                    transform: `rotate(${c.rotate}deg)`,
+                    width: `${c.width}px`,
+                    height: `${c.height}px`,
+                  }}
+                />
+              ))}
+            </div>
+            <div className="winner-stage-wrapper">
+              <div className="winner-stage">
+                <div className="winner-photo-ring">
+                  {winner?.photoPath
+                    ? <img className="winner-photo" src={toLocalFile(winner.photoPath) ?? ''} alt={winner?.name} />
+                    : <div className="winner-photo-placeholder">{winner?.name?.[0] ?? '?'}</div>
+                  }
+                </div>
+                <div className="winner-name">{winner?.name}</div>
+                <div className="winner-label">¡GANADOR!</div>
+                <div className="winner-sublabel">MEJOR AGENTE</div>
+              </div>
+            </div>
           </div>
         )
-      )}
+      })()}
+
+      {/* ── Fase D: VS pulsante ── */}
+      {improsiblePhase === 'vs' && improsibleFinalists && (() => {
+        const fa = state.participants.find(p => p.id === improsibleFinalists[0])
+        const fb = state.participants.find(p => p.id === improsibleFinalists[1])
+        return (
+          <div className="improsible-vs-overlay">
+            <div className="improsible-vs-bg" />
+            <div className="improsible-vs-label">¿Quién será el mejor agente?</div>
+            <div className="improsible-vs-content">
+              <div className="improsible-finalist-card improsible-finalist-card--a">
+                <div className="improsible-finalist-photo">
+                  {fa?.photoPath
+                    ? <img src={toLocalFile(fa.photoPath) ?? ''} alt={fa?.name} />
+                    : <div className="improsible-finalist-placeholder">A</div>}
+                </div>
+                <div className="improsible-finalist-name">{fa?.name}</div>
+              </div>
+              <div className="improsible-vs-center">
+                <div className="improsible-vs-word">VS</div>
+              </div>
+              <div className="improsible-finalist-card improsible-finalist-card--b">
+                <div className="improsible-finalist-photo">
+                  {fb?.photoPath
+                    ? <img src={toLocalFile(fb.photoPath) ?? ''} alt={fb?.name} />
+                    : <div className="improsible-finalist-placeholder">B</div>}
+                </div>
+                <div className="improsible-finalist-name">{fb?.name}</div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

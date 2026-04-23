@@ -14,6 +14,13 @@ export interface MissionView {
   allPlay?: boolean
 }
 
+export type MissionAssignmentMap = Record<string, 'impro' | 'sible' | 'none'>
+
+export interface MissionPreload {
+  allPlay: boolean
+  assignments: MissionAssignmentMap
+}
+
 export interface AppState {
   title: string
   subtitle: string
@@ -36,9 +43,13 @@ export interface AppState {
   curtainFlipDuration?: number
   curtainPulseEnabled?: boolean
   curtainPulseDuration?: number
+  curtainPulseColor?: string
   curtainLogoColor?: 'white' | 'orange'
   curtainWobbleEnabled?: boolean
   curtainWobbleDuration?: number
+  missionPreloads?: Record<string, MissionPreload>
+  improsibleFinalists?: [string, string] | null
+  improsibleWinner?: string | null
 }
 
 export interface MissionData {

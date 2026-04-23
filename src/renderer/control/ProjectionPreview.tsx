@@ -19,7 +19,9 @@ export function ProjectionPreview({ state }: Props) {
     const u1 = window.electronAPI.onObjectiveAnnounce(() => triggerAnim(5200))
     const u2 = window.electronAPI.onMissionAnnounce(() => triggerAnim(6000))
     const u3 = window.electronAPI.onShowRatings(() => triggerAnim(1500))
-    return () => { u1(); u2(); u3() }
+    const u4 = window.electronAPI.onImprosibleStart(() => triggerAnim(30000))
+    const u5 = window.electronAPI.onImprosibleClear(() => { setAnimating(false); clearTimeout(animTimerRef.current) })
+    return () => { u1(); u2(); u3(); u4(); u5() }
   }, [])
 
   const visible = state.participants.slice(0, state.visibleParticipants)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Monitor, Play, RotateCcw, Target, Plus, Trash2 } from 'lucide-react'
+import { Monitor, Play, RotateCcw, Target, Plus, Trash2, GripVertical } from 'lucide-react'
 import { AppState, Participant, MissionData, ObjectiveData, CinematicData, CinematicAudioData } from '../../shared/types'
 import { ProjectionPreview } from './ProjectionPreview'
 import { playAudio, getAudioDuration } from '../utils/audio'
@@ -62,6 +62,7 @@ export function ControlApp() {
   const [newObjDesc, setNewObjDesc] = useState('')
   const [newObjAudio, setNewObjAudio] = useState<string | null>(null)
   const [deleteObjectiveConfirm, setDeleteObjectiveConfirm] = useState<ObjectiveData | null>(null)
+  const [objectiveSearch, setObjectiveSearch] = useState('')
 
   // Mission modals
   const [addMissionModal, setAddMissionModal] = useState(false)
@@ -75,32 +76,59 @@ export function ControlApp() {
   const [scoreInputValues, setScoreInputValues] = useState<Record<string, string>>({})
   const [executedObjectives, setExecutedObjectives] = useState<Set<number>>(new Set())
   const [executedMissions, setExecutedMissions] = useState<Set<number>>(new Set())
-  const [improsibleExecuted, setImprosibleExecuted] = useState(false)
+  const [executedCinematics, setExecutedCinematics] = useState<Set<string>>(new Set())
+  const [executedCinematicAudios, setExecutedCinematicAudios] = useState<Set<string>>(new Set())
+  const [improsibleFinalists, setImprosibleFinalists] = useState<[string, string] | null>(null)
+  const [improsibleLaunched, setImprosibleLaunched] = useState(false)
+  const [selectedWinnerId, setSelectedWinnerId] = useState<string | null>(null)
+  const [finalAnimationPlaying, setFinalAnimationPlaying] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
   const [animatingKey, setAnimatingKey] = useState<string | null>(null)
   const [shakingIds, setShakingIds] = useState<Set<string>>(new Set())
   const [ratings, setRatings] = useState<Record<string, RatingKey>>({})
   const [rouletteConfirm, setRouletteConfirm] = useState(false)
+  const [autoClearStart, setAutoClearStart] = useState<number | null>(null)
+  const [autoClearNow, setAutoClearNow] = useState(0)
+  const [eliminatedAt, setEliminatedAt] = useState<Record<string, number>>({})
+  const [eliminatedNow, setEliminatedNow] = useState(0)
+
+  // Mission drag-and-drop
+  const [missionDragIdx, setMissionDragIdx] = useState<number | null>(null)
+  const [missionDragOverIdx, setMissionDragOverIdx] = useState<number | null>(null)
 
   // Mission start modal
   const [missionModal, setMissionModal] = useState(false)
   const [missionName, setMissionName] = useState('')
   const [missionAssignments, setMissionAssignments] = useState<Record<string, 'impro' | 'sible' | 'none'>>({})
   const [allPlay, setAllPlay] = useState(false)
+  const [usePreload, setUsePreload] = useState(false)
+
+  // Preload agents modal
+  const [preloadModal, setPreloadModal] = useState(false)
+  const [preloadMissionName, setPreloadMissionName] = useState('')
+  const [preloadAssignments, setPreloadAssignments] = useState<Record<string, 'impro' | 'sible' | 'none'>>({})
+  const [preloadAllPlay, setPreloadAllPlay] = useState(false)
+
+  const activePreload = usePreload ? state?.missionPreloads?.[missionName] : undefined
+  const effectiveAllPlay = usePreload ? !!activePreload?.allPlay : allPlay
+  const effectiveAssignments = usePreload ? (activePreload?.assignments ?? {}) : missionAssignments
 
   const missionCanStart = state
-    ? allPlay ||
-      (state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'impro') &&
-       state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'sible'))
+    ? (usePreload
+        ? !!activePreload && (effectiveAllPlay ||
+            (state.participants.some(p => (effectiveAssignments[p.id] ?? 'none') === 'impro') &&
+             state.participants.some(p => (effectiveAssignments[p.id] ?? 'none') === 'sible')))
+        : allPlay ||
+          (state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'impro') &&
+           state.participants.some(p => (missionAssignments[p.id] ?? 'none') === 'sible')))
     : false
 
-  // Regular missions (exclude "Misión Improsible")
-  const regularMissions = missionData.filter(m => m.name !== 'Misión Improsible')
+  const regularMissions = missionData
 
   useEffect(() => {
     window.electronAPI.getMissions().then(missions => {
       setMissionData(missions)
-      const first = missions.find(m => m.name !== 'Misión Improsible')
+      const first = missions[0]
       if (first) setMissionName(first.name)
     })
     window.electronAPI.getObjectives().then(setObjectiveData)
@@ -126,6 +154,48 @@ export function ControlApp() {
     return unsub
   }, [])
 
+  const AUTO_CLEAR_MS = 5000
+  const ELIM_RESTORE_MS = 5000
+
+  const stateRef = useRef(state)
+  useEffect(() => { stateRef.current = state }, [state])
+
+  useEffect(() => {
+    const ids = Object.keys(eliminatedAt)
+    if (ids.length === 0) return
+    const interval = setInterval(() => setEliminatedNow(Date.now()), 100)
+    const timers = ids.map(id => {
+      const elapsed = Date.now() - eliminatedAt[id]
+      const remaining = Math.max(0, ELIM_RESTORE_MS - elapsed)
+      return setTimeout(() => {
+        const current = stateRef.current?.participants.find(p => p.id === id)
+        if (current && current.eliminated) {
+          window.electronAPI.updateParticipant({ ...current, eliminated: false })
+        }
+        setEliminatedAt(prev => {
+          if (!(id in prev)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      }, remaining)
+    })
+    return () => { clearInterval(interval); timers.forEach(clearTimeout) }
+  }, [eliminatedAt])
+
+  useEffect(() => {
+    if (autoClearStart === null) return
+    const tick = () => setAutoClearNow(Date.now())
+    const interval = setInterval(tick, 100)
+    const elapsed = Date.now() - autoClearStart
+    const remaining = Math.max(0, AUTO_CLEAR_MS - elapsed)
+    const timeout = setTimeout(() => {
+      window.electronAPI.clearRatings()
+      setAutoClearStart(null)
+    }, remaining)
+    return () => { clearInterval(interval); clearTimeout(timeout) }
+  }, [autoClearStart])
+
   const playGunshot = () => {
     if (soundDisparo) playAudio(soundDisparo, state?.volume ?? 100)
   }
@@ -136,10 +206,19 @@ export function ControlApp() {
     playGunshot()
     setShakingIds(prev => new Set(prev).add(id))
     setTimeout(() => setShakingIds(prev => { const s = new Set(prev); s.delete(id); return s }), 600)
+    const now = Date.now()
+    setEliminatedAt(prev => ({ ...prev, [id]: now }))
+    setEliminatedNow(now)
   }
 
   const handleRestore = (id: string) => {
     window.electronAPI.updateParticipant({ ...state!.participants.find(p => p.id === id)!, eliminated: false })
+    setEliminatedAt(prev => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
   }
 
   const animatingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -150,6 +229,21 @@ export function ControlApp() {
     setAnimatingKey(key)
     animatingTimer.current = setTimeout(() => { setIsAnimating(false); setAnimatingKey(null) }, ms)
   }
+
+  // Recalcula blockFor cuando llega el audioPath real de la secuencia improsible
+  useEffect(() => {
+    const unsub = window.electronAPI.onImprosibleStart((_finalistIds, audioPath) => {
+      if (!audioPath) return
+      const url = toLocalFile(audioPath)
+      if (!url) return
+      // barrel dura 13s fijos; bloqueamos duración_audio + 13s + 500ms de margen
+      getAudioDuration(url, (audioDuration) => {
+        blockFor(audioDuration + 13000 + 500, 'improsible')
+      })
+    })
+    return unsub
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const fireMission = (name: string, key: string) => {
     if (isAnimating) return
@@ -211,9 +305,30 @@ export function ControlApp() {
     setNewMissionAudio(null)
   }
 
+  const reorderRegularMissions = async (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return
+    const reordered = [...regularMissions]
+    if (fromIdx >= reordered.length || toIdx >= reordered.length) return
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+
+    const executedNames = new Set(
+      Array.from(executedMissions)
+        .map(id => missionData.find(m => m.id === id)?.name)
+        .filter((n): n is string => !!n)
+    )
+
+    const next: MissionData[] = reordered.map((m, i) => ({ ...m, id: i + 1 }))
+
+    setMissionData(next)
+    setExecutedMissions(new Set(next.filter(m => executedNames.has(m.name)).map(m => m.id)))
+    await window.electronAPI.saveMissions(next)
+  }
+
   const handleDeleteMission = async (mission: MissionData) => {
     const updated = missionData.filter(m => m.id !== mission.id)
     await window.electronAPI.saveMissions(updated)
+    if (mission.audioPath) await window.electronAPI.deleteFile(mission.audioPath)
     setMissionData(updated)
     setDeleteMissionConfirm(null)
   }
@@ -242,6 +357,7 @@ export function ControlApp() {
   const handleDeleteObjective = async (obj: ObjectiveData) => {
     const updated = objectiveData.filter(o => o.id !== obj.id)
     await window.electronAPI.saveObjectives(updated)
+    if (obj.audioPath) await window.electronAPI.deleteFile(obj.audioPath)
     setObjectiveData(updated)
     setDeleteObjectiveConfirm(null)
   }
@@ -261,6 +377,7 @@ export function ControlApp() {
   const handleDeleteCinematicAudio = async (entry: CinematicAudioData) => {
     const updated = cinematicAudioData.filter(a => a.name !== entry.name)
     await window.electronAPI.saveCinematicAudios(updated)
+    if (entry.audioPath) await window.electronAPI.deleteFile(entry.audioPath)
     setCinematicAudioData(updated)
     setDeleteCinematicAudioConfirm(null)
   }
@@ -280,6 +397,7 @@ export function ControlApp() {
   const handleDeleteCinematic = async (cinematic: CinematicData) => {
     const updated = cinematicData.filter(c => c.name !== cinematic.name)
     await window.electronAPI.saveCinematics(updated)
+    if (cinematic.videoPath) await window.electronAPI.deleteFile(cinematic.videoPath)
     setCinematicData(updated)
     setDeleteCinematicConfirm(null)
   }
@@ -298,8 +416,10 @@ export function ControlApp() {
   }
 
   const handleDeleteChallenge = async (name: string) => {
+    const entry = challengeData.find(c => c.name === name)
     const updated = challengeData.filter(c => c.name !== name)
     await window.electronAPI.saveChallenges(updated)
+    if (entry?.audioPath) await window.electronAPI.deleteFile(entry.audioPath)
     setChallengeData(updated)
     setEnabledChallenges(prev => { const s = new Set(prev); s.delete(name); return s })
     setDeleteChallengeConfirm(null)
@@ -424,47 +544,74 @@ export function ControlApp() {
                         >
                           <Target size={13} />
                         </button>
-                        <button
-                          className="elim-btn elim-btn--restore"
-                          onClick={() => handleRestore(p.id)}
-                          disabled={!p.eliminated}
-                          title="Restaurar participante"
-                        >
-                          <RotateCcw size={13} />
-                        </button>
+                        {(() => {
+                          const startedAt = eliminatedAt[p.id]
+                          const counting = startedAt !== undefined
+                          const elapsed = counting ? eliminatedNow - startedAt : 0
+                          const progress = counting
+                            ? Math.min(1, elapsed / ELIM_RESTORE_MS)
+                            : 0
+                          const radius = 10
+                          const circumference = 2 * Math.PI * radius
+                          const dashOffset = circumference * (1 - progress)
+                          return (
+                            <button
+                              className={`elim-btn elim-btn--restore${counting ? ' elim-btn--counting' : ''}`}
+                              onClick={() => handleRestore(p.id)}
+                              disabled={!p.eliminated}
+                              title="Restaurar participante"
+                            >
+                              {counting && (
+                                <svg className="elim-progress-ring" viewBox="0 0 24 24" aria-hidden="true">
+                                  <circle cx="12" cy="12" r={radius} className="elim-progress-track" />
+                                  <circle
+                                    cx="12" cy="12" r={radius}
+                                    className="elim-progress-bar"
+                                    style={{ strokeDasharray: circumference, strokeDashoffset: dashOffset }}
+                                  />
+                                </svg>
+                              )}
+                              <RotateCcw size={13} />
+                            </button>
+                          )
+                        })()}
                       </div>
                     </div>
                   </div>
                 ))}
                 <div className="rating-actions">
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => {
-                      const toApply = state.participants.filter(p => (ratings[p.id] ?? 'noaplica') !== 'noaplica')
-                      toApply.forEach(p => {
-                        const pts = RATING_OPTIONS.find(o => o.key === ratings[p.id])!.points
-                        window.electronAPI.updateScore(p.id, pts)
-                      })
-                      const payload: Record<string, string> = {}
-                      toApply.forEach(p => { payload[p.id] = ratings[p.id] })
-                      window.electronAPI.showRatings(payload)
-                      setRatings({})
-                    }}
-                  >
-                    Aplicar calificaciones
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      window.electronAPI.clearRatings()
-                      setRatings({})
-                      state.participants.filter(p => p.eliminated).forEach(p =>
-                        window.electronAPI.updateParticipant({ ...p, eliminated: false })
-                      )
-                    }}
-                  >
-                    Limpiar calificaciones
-                  </button>
+                  {(() => {
+                    const elapsed = autoClearStart !== null ? autoClearNow - autoClearStart : 0
+                    const remainingMs = autoClearStart !== null ? Math.max(0, AUTO_CLEAR_MS - elapsed) : 0
+                    const remainingSec = Math.ceil(remainingMs / 1000)
+                    const progressPct = autoClearStart !== null
+                      ? Math.min(100, (elapsed / AUTO_CLEAR_MS) * 100)
+                      : 0
+                    const active = autoClearStart !== null
+                    return (
+                      <button
+                        className={`btn btn-ghost clear-ratings-btn${active ? ' clear-ratings-btn--counting' : ''}`}
+                        onClick={() => {
+                          window.electronAPI.clearRatings()
+                          setRatings({})
+                          setAutoClearStart(null)
+                          state.participants.filter(p => p.eliminated).forEach(p =>
+                            window.electronAPI.updateParticipant({ ...p, eliminated: false })
+                          )
+                        }}
+                      >
+                        {active && (
+                          <span
+                            className="clear-ratings-progress"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        )}
+                        <span className="clear-ratings-label">
+                          Limpiar calificaciones{active ? ` (${remainingSec})` : ''}
+                        </span>
+                      </button>
+                    )
+                  })()}
                 </div>
               </div>
             )}
@@ -606,6 +753,62 @@ export function ControlApp() {
                       <span>0.5s (rápido)</span><span>20s (lento)</span>
                     </div>
                   </div>
+                  <div className="field-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="field-label">Color del logo (RGB)</span>
+                      <span style={{ fontSize: 13, color: state.curtainPulseColor ?? '#ff5500', fontWeight: 700 }}>
+                        {(state.curtainPulseColor ?? '#ff5500').toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="color"
+                        value={state.curtainPulseColor ?? '#ff5500'}
+                        onChange={e => window.electronAPI.updateAppState({ curtainPulseColor: e.target.value })}
+                        style={{ width: 48, height: 32, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+                      />
+                      <input
+                        type="text"
+                        value={state.curtainPulseColor ?? '#ff5500'}
+                        onChange={e => {
+                          const v = e.target.value
+                          if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+                            window.electronAPI.updateAppState({ curtainPulseColor: v.toLowerCase() })
+                          } else {
+                            window.electronAPI.updateAppState({ curtainPulseColor: v })
+                          }
+                        }}
+                        placeholder="#ff5500"
+                        style={{ flex: 1, padding: '6px 8px', background: '#1f2937', color: '#e5e7eb', border: '1px solid #374151', borderRadius: 4, fontFamily: 'monospace', fontSize: 13 }}
+                      />
+                      {[0, 1, 2].map(i => {
+                        const hex = state.curtainPulseColor ?? '#ff5500'
+                        const r = parseInt(hex.slice(1, 3), 16) || 0
+                        const g = parseInt(hex.slice(3, 5), 16) || 0
+                        const b = parseInt(hex.slice(5, 7), 16) || 0
+                        const rgb = [r, g, b]
+                        const labels = ['R', 'G', 'B']
+                        return (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <span style={{ fontSize: 11, color: '#9ca3af' }}>{labels[i]}</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={255}
+                              value={rgb[i]}
+                              onChange={e => {
+                                const v = Math.max(0, Math.min(255, Number(e.target.value) || 0))
+                                rgb[i] = v
+                                const next = '#' + rgb.map(n => n.toString(16).padStart(2, '0')).join('')
+                                window.electronAPI.updateAppState({ curtainPulseColor: next })
+                              }}
+                              style={{ width: 52, padding: '4px 6px', background: '#1f2937', color: '#e5e7eb', border: '1px solid #374151', borderRadius: 4, fontSize: 12 }}
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
                 </div>
                 <div className="config-group">
                   <div className="config-group-title">Zumbido</div>
@@ -656,12 +859,26 @@ export function ControlApp() {
               </div>
             )}
 
-            {activeTab === 'objetivos' && (
+            {activeTab === 'objetivos' && (() => {
+              const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+              const q = normalize(objectiveSearch.trim())
+              const filteredObjectives = q
+                ? objectiveData.filter(o => normalize(o.name).includes(q) || String(o.id).includes(q))
+                : objectiveData
+              return (
               <div className="obj-list">
-                <div className="obj-list-toolbar">
+                <div className="obj-list-toolbar" style={{ gap: 8 }}>
                   <button className="btn btn-primary btn-sm" onClick={() => setAddObjectiveModal(true)}>
                     <Plus size={13} /> Nuevo objetivo
                   </button>
+                  <input
+                    type="text"
+                    className="field-input"
+                    placeholder="Buscar objetivo..."
+                    value={objectiveSearch}
+                    onChange={e => setObjectiveSearch(e.target.value)}
+                    style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
+                  />
                 </div>
                 <table className="obj-table">
                   <thead>
@@ -675,7 +892,7 @@ export function ControlApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {objectiveData.map(obj => (
+                    {filteredObjectives.map(obj => (
                       <tr key={obj.id} className="obj-row">
                         <td className="obj-td obj-td-num">{obj.id}</td>
                         <td className="obj-td obj-td-play">
@@ -704,7 +921,8 @@ export function ControlApp() {
                   </tbody>
                 </table>
               </div>
-            )}
+              )
+            })()}
 
             {activeTab === 'desafios' && (
               <div className="obj-list">
@@ -734,6 +952,20 @@ export function ControlApp() {
                 <div className="challenge-list">
                   {challengeData.map(c => (
                     <div key={c.name} className={`challenge-item${enabledChallenges.has(c.name) ? '' : ' challenge-item--disabled'}`}>
+                      <button
+                        className="obj-play-btn"
+                        title="Reproducir animación"
+                        onClick={() => {
+                          const names = challengeData.map(x => x.name)
+                          const winnerIndex = names.indexOf(c.name)
+                          if (winnerIndex < 0) return
+                          window.electronAPI.updateAppState({ curtain: false, activeCinematic: null, activeCinematicName: null })
+                          window.electronAPI.startRoulette(winnerIndex, names, true)
+                          setEnabledChallenges(prev => { const s = new Set(prev); s.delete(c.name); return s })
+                        }}
+                      >
+                        <Play size={10} fill="#fff" color="#fff" />
+                      </button>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, cursor: 'pointer' }}>
                         <input
                           type="checkbox"
@@ -771,21 +1003,29 @@ export function ControlApp() {
                 </div>
                 <div className="challenge-list">
                   {cinematicData.map(c => (
-                    <div key={c.name} className="challenge-item">
+                    <div
+                      key={c.name}
+                      className="challenge-item"
+                      onClick={() => setPlayCinematicConfirm(c)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <button
-                        className="obj-play-btn"
+                        className={`obj-play-btn${executedCinematics.has(c.name) ? ' obj-play-btn--done' : ''}`}
                         title="Reproducir"
-                        onClick={() => setPlayCinematicConfirm(c)}
+                        onClick={e => { e.stopPropagation(); setPlayCinematicConfirm(c) }}
                       >
                         <Play size={10} fill="#fff" color="#fff" />
                       </button>
-                      <span style={{ flex: 1, fontSize: 13 }}>{c.name}</span>
+                      <span style={{ flex: 1, fontSize: 13 }}>
+                        {c.name}
+                        {executedCinematics.has(c.name) && <span className="obj-executed-badge" style={{ marginLeft: 8 }}>Ya ejecutado</span>}
+                      </span>
                       <span style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
                         {c.videoPath ? c.videoPath.split(/[\\/]/).pop() : 'Sin video'}
                       </span>
                       <button
                         className="obj-del-btn"
-                        onClick={() => setDeleteCinematicConfirm(c)}
+                        onClick={e => { e.stopPropagation(); setDeleteCinematicConfirm(c) }}
                         title="Eliminar cinemática"
                       >
                         <Trash2 size={12} />
@@ -808,19 +1048,31 @@ export function ControlApp() {
                 </div>
                 <div className="challenge-list">
                   {cinematicAudioData.map(a => (
-                    <div key={a.name} className="challenge-item">
+                    <div
+                      key={a.name}
+                      className="challenge-item"
+                      onClick={() => setPlayCinematicAudioConfirm(a)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <button
-                        className="obj-play-btn"
+                        className={`obj-play-btn${executedCinematicAudios.has(a.name) ? ' obj-play-btn--done' : ''}`}
                         title="Reproducir"
-                        onClick={() => setPlayCinematicAudioConfirm(a)}
+                        onClick={e => { e.stopPropagation(); setPlayCinematicAudioConfirm(a) }}
                       >
                         <Play size={10} fill="#fff" color="#fff" />
                       </button>
-                      <span style={{ flex: 1, fontSize: 13 }}>{a.name}</span>
+                      <span style={{ flex: 1, fontSize: 13 }}>
+                        {a.name}
+                        {executedCinematicAudios.has(a.name) && <span className="obj-executed-badge" style={{ marginLeft: 8 }}>Ya ejecutado</span>}
+                      </span>
                       <span style={{ fontSize: 11, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
                         {a.audioPath ? a.audioPath.split(/[\\/]/).pop() : 'Sin audio'}
                       </span>
-                      <button className="obj-del-btn" onClick={() => setDeleteCinematicAudioConfirm(a)} title="Eliminar audio">
+                      <button
+                        className="obj-del-btn"
+                        onClick={e => { e.stopPropagation(); setDeleteCinematicAudioConfirm(a) }}
+                        title="Eliminar audio"
+                      >
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -851,9 +1103,58 @@ export function ControlApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {regularMissions.map(m => (
-                      <tr key={m.id} className="obj-row">
-                        <td className="obj-td obj-td-num">{m.id}</td>
+                    {regularMissions.map((m, idx) => {
+                      const preload = state.missionPreloads?.[m.name]
+                      const preloadNames = preload
+                        ? preload.allPlay
+                          ? 'Todos'
+                          : state.participants
+                              .filter(p => preload.assignments[p.id] === 'impro' || preload.assignments[p.id] === 'sible')
+                              .map(p => p.name)
+                              .join(', ')
+                        : null
+                      const isDragging = missionDragIdx === idx
+                      const isDragOver = missionDragOverIdx === idx && missionDragIdx !== null && missionDragIdx !== idx
+                      return (
+                      <tr
+                        key={m.id}
+                        className="obj-row"
+                        onDragOver={e => {
+                          if (missionDragIdx === null) return
+                          e.preventDefault()
+                          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                          if (missionDragOverIdx !== idx) setMissionDragOverIdx(idx)
+                        }}
+                        onDrop={e => {
+                          e.preventDefault()
+                          if (missionDragIdx !== null) reorderRegularMissions(missionDragIdx, idx)
+                          setMissionDragIdx(null)
+                          setMissionDragOverIdx(null)
+                        }}
+                        style={{
+                          opacity: isDragging ? 0.4 : 1,
+                          borderTop: isDragOver && (missionDragIdx ?? 0) > idx ? '2px solid #f97316' : undefined,
+                          borderBottom: isDragOver && (missionDragIdx ?? 0) < idx ? '2px solid #f97316' : undefined,
+                        }}
+                      >
+                        <td className="obj-td obj-td-num">
+                          <span
+                            draggable
+                            onDragStart={e => {
+                              setMissionDragIdx(idx)
+                              if (e.dataTransfer) {
+                                e.dataTransfer.effectAllowed = 'move'
+                                e.dataTransfer.setData('text/plain', String(idx))
+                              }
+                            }}
+                            onDragEnd={() => { setMissionDragIdx(null); setMissionDragOverIdx(null) }}
+                            title="Arrastrar para reordenar"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'grab', color: '#6b7280' }}
+                          >
+                            <GripVertical size={12} />
+                            {m.id}
+                          </span>
+                        </td>
                         <td className="obj-td obj-td-play">
                           <button
                             className={`obj-play-btn${animatingKey === `mission-${m.id}` ? ' obj-play-btn--executing' : isAnimating ? ' obj-play-btn--blocked' : executedMissions.has(m.id) ? ' obj-play-btn--done' : ''}`}
@@ -865,6 +1166,33 @@ export function ControlApp() {
                           {m.name}
                           {animatingKey === `mission-${m.id}` && <span className="obj-executing-badge">En ejecución</span>}
                           {executedMissions.has(m.id) && animatingKey !== `mission-${m.id}` && <span className="obj-executed-badge">Ya ejecutado</span>}
+                          {state.missionView?.active && state.missionView.name === m.name && (
+                            <button
+                              className="btn btn-danger"
+                              style={{ marginLeft: 8, padding: '3px 10px', fontSize: 11 }}
+                              onClick={() => window.electronAPI.updateAppState({ missionView: null })}
+                            >
+                              Finalizar
+                            </button>
+                          )}
+                          {preloadNames && (
+                            <div style={{ marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <div style={{ fontSize: 11, color: '#f97316', fontWeight: 500 }}>
+                                Precargado con: <span style={{ color: '#e5e7eb' }}>{preloadNames}</span>
+                              </div>
+                              <button
+                                className="btn btn-primary"
+                                style={{ padding: '3px 10px', fontSize: 11 }}
+                                onClick={() => {
+                                  const teamImpro = preload!.allPlay ? [] : state.participants.filter(p => preload!.assignments[p.id] === 'impro').map(p => p.id)
+                                  const teamSible = preload!.allPlay ? [] : state.participants.filter(p => preload!.assignments[p.id] === 'sible').map(p => p.id)
+                                  window.electronAPI.updateAppState({ missionView: { active: true, name: m.name, teamImpro, teamSible, allPlay: preload!.allPlay } })
+                                }}
+                              >
+                                Ejecutar misión precargada
+                              </button>
+                            </div>
+                          )}
                         </td>
                         <td className="obj-td obj-td-del">
                           <button className="obj-del-btn" onClick={() => setDeleteMissionConfirm(m)} title="Eliminar misión">
@@ -872,31 +1200,198 @@ export function ControlApp() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
                 <div style={{ padding: '12px 4px 0', display: 'flex', gap: 8 }}>
                   <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setMissionModal(true)}>
                     Iniciar misión
                   </button>
-                  {state.missionView?.active && (
-                    <button className="btn btn-danger" onClick={() => window.electronAPI.updateAppState({ missionView: null })}>
-                      Finalizar misión
-                    </button>
-                  )}
-                </div>
-                <div style={{ padding: '8px 4px 4px' }}>
                   <button
-                    className={`btn mission-improsible-btn${animatingKey === 'improsible' ? ' mission-improsible-btn--executing' : improsibleExecuted ? ' mission-improsible-btn--done' : ''}`}
-                    style={{ width: '100%' }}
-                    disabled={isAnimating}
-                    onClick={() => { fireMission('Misión Improsible', 'improsible'); setImprosibleExecuted(true) }}
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const first = regularMissions[0]?.name ?? ''
+                      const existing = first ? state.missionPreloads?.[first] : undefined
+                      setPreloadMissionName(first)
+                      setPreloadAllPlay(existing?.allPlay ?? false)
+                      setPreloadAssignments(existing?.assignments ?? {})
+                      setPreloadModal(true)
+                    }}
                   >
-                    Misión Improsible
-                    {animatingKey === 'improsible' && <span className="obj-executing-badge" style={{ marginLeft: 10 }}>En ejecución</span>}
-                    {improsibleExecuted && animatingKey !== 'improsible' && <span className="obj-executed-badge" style={{ marginLeft: 10 }}>Ya ejecutado</span>}
+                    Precargar agentes
                   </button>
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'improsible' && (
+              <div className="obj-list improsible-tab">
+                {/* Header */}
+                <div className="improsible-tab-header">
+                  <span className="improsible-tab-title">Misión Improsible</span>
+                  <span className="improsible-tab-counter">{improsibleFinalists ? improsibleFinalists.filter(Boolean).length : 0}/2 finalistas</span>
+                </div>
+
+                {/* Finalist slots */}
+                <div className="improsible-slots">
+                  {([0, 1] as const).map(idx => {
+                    const fId = improsibleFinalists?.[idx]
+                    const fp = fId ? state.participants.find(p => p.id === fId) : null
+                    return (
+                      <div key={idx} className={`improsible-slot${fp ? ' improsible-slot--filled' : ''}`}>
+                        {fp ? (
+                          <>
+                            {fp.photoPath && (
+                              <img src={toLocalFile(fp.photoPath) ?? ''} alt={fp.name} className="improsible-slot-photo" />
+                            )}
+                            <span className="improsible-slot-name">{fp.name}</span>
+                            <button
+                              className="improsible-slot-remove"
+                              onClick={() => {
+                                const next = [...(improsibleFinalists ?? ['', ''])] as [string, string]
+                                next[idx] = ''
+                                const filtered = next.filter(Boolean)
+                                setImprosibleFinalists(filtered.length === 2 ? [filtered[0], filtered[1]] : null)
+                              }}
+                            >×</button>
+                          </>
+                        ) : (
+                          <span className="improsible-slot-empty">Finalista {idx + 1}</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Participant grid */}
+                <p className="improsible-grid-label">Seleccione sus participantes</p>
+                <div className="improsible-pcard-grid">
+                  {state.participants.slice(0, state.visibleParticipants).map(p => {
+                    const isSelected = improsibleFinalists?.[0] === p.id || improsibleFinalists?.[1] === p.id
+                    const isFull = !!(improsibleFinalists?.[0] && improsibleFinalists?.[1])
+                    const isDisabled = isFull && !isSelected
+                    const photoUrl = p.photoPath ? toLocalFile(p.photoPath) : null
+                    const initials = p.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                    return (
+                      <div
+                        key={p.id}
+                        className={`improsible-pcard${isSelected ? ' improsible-pcard--selected' : ''}${isDisabled ? ' improsible-pcard--disabled' : ''}${p.eliminated ? ' improsible-pcard--elim' : ''}`}
+                        onClick={() => {
+                          if (isDisabled) return
+                          if (isSelected) {
+                            const next = [...(improsibleFinalists ?? ['', ''])] as [string, string]
+                            const idxToRemove = next.indexOf(p.id)
+                            if (idxToRemove >= 0) next[idxToRemove] = ''
+                            const filtered = next.filter(Boolean)
+                            setImprosibleFinalists(filtered.length === 2 ? [filtered[0], filtered[1]] : null)
+                          } else {
+                            if (!improsibleFinalists) {
+                              setImprosibleFinalists([p.id, ''] as unknown as [string, string])
+                            } else {
+                              const next = [...improsibleFinalists] as [string, string]
+                              const emptyIdx = next.indexOf('' as string)
+                              if (emptyIdx >= 0) next[emptyIdx] = p.id
+                              setImprosibleFinalists(next)
+                            }
+                          }
+                          setImprosibleLaunched(false)
+                        }}
+                      >
+                        <div className="improsible-pcard-photo">
+                          {photoUrl
+                            ? <img src={photoUrl} alt={p.name} className="improsible-pcard-img" />
+                            : <span className="improsible-pcard-initials">{initials}</span>
+                          }
+                          {isSelected && <div className="improsible-pcard-check-badge">✓</div>}
+                          {p.eliminated && <span className="improsible-pcard-elim-badge">ELIM.</span>}
+                        </div>
+                        <span className="improsible-pcard-name">{p.name}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Action buttons */}
+                <div className="improsible-actions">
+                  <button
+                    className={`btn improsible-launch-btn${improsibleLaunched ? ' improsible-launch-btn--done' : ''}`}
+                    disabled={!(improsibleFinalists?.[0] && improsibleFinalists?.[1]) || isAnimating}
+                    onClick={() => {
+                      if (!improsibleFinalists?.[0] || !improsibleFinalists?.[1]) return
+                      window.electronAPI.startImprosible([improsibleFinalists[0], improsibleFinalists[1]])
+                      setImprosibleLaunched(true)
+                      // Bloqueo generoso; onImprosibleStart recalcula con duración real del audio
+                      blockFor(30000, 'improsible')
+                    }}
+                  >
+                    {improsibleLaunched ? 'Misión en curso' : 'Iniciar Misión Improsible'}
+                  </button>
+                  <button
+                    className="btn btn-ghost improsible-clear-btn"
+                    onClick={() => {
+                      window.electronAPI.clearImprosible()
+                      setImprosibleLaunched(false)
+                      setSelectedWinnerId(null)
+                      setFinalAnimationPlaying(false)
+                    }}
+                  >
+                    Cerrar overlay
+                  </button>
+                </div>
+
+                {/* Selector de ganador — visible solo cuando la misión está activa */}
+                {improsibleLaunched && improsibleFinalists?.[0] && improsibleFinalists?.[1] && (() => {
+                  const fa = state.participants.find(p => p.id === improsibleFinalists[0])
+                  const fb = state.participants.find(p => p.id === improsibleFinalists[1])
+                  const toLocal = (path: string | null) => {
+                    if (!path) return null
+                    const normalized = path.replace(/\\/g, '/')
+                    const encoded = normalized.split('/').map((seg: string, i: number) =>
+                      i === 0 && /^[A-Za-z]:$/.test(seg) ? seg : encodeURIComponent(seg)
+                    ).join('/')
+                    return `localfile:///${encoded}`
+                  }
+                  return (
+                    <div className="improsible-winner-selector">
+                      <div className="improsible-winner-selector-title">Seleccionar ganador</div>
+                      <div className="improsible-winner-cards">
+                        {[fa, fb].map(p => {
+                          if (!p) return null
+                          const photoUrl = toLocal(p.photoPath)
+                          const isWinner = selectedWinnerId === p.id
+                          return (
+                            <div
+                              key={p.id}
+                              className={`improsible-winner-card${isWinner ? ' improsible-winner-card--selected' : ''}`}
+                              onClick={() => setSelectedWinnerId(isWinner ? null : p.id)}
+                            >
+                              <div className="improsible-winner-card-photo">
+                                {photoUrl
+                                  ? <img src={photoUrl} alt={p.name} />
+                                  : <span>{p.name[0]}</span>
+                                }
+                                {isWinner && <div className="improsible-winner-card-crown">👑</div>}
+                              </div>
+                              <div className="improsible-winner-card-name">{p.name}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <button
+                        className={`btn improsible-final-btn${finalAnimationPlaying ? ' improsible-final-btn--playing' : ''}`}
+                        disabled={!selectedWinnerId || finalAnimationPlaying}
+                        onClick={() => {
+                          if (!selectedWinnerId) return
+                          window.electronAPI.startImprosibleFinal(selectedWinnerId)
+                          setFinalAnimationPlaying(true)
+                        }}
+                      >
+                        {finalAnimationPlaying ? 'Animación final en curso' : 'Animación final'}
+                      </button>
+                    </div>
+                  )
+                })()}
               </div>
             )}
 
@@ -909,6 +1404,43 @@ export function ControlApp() {
             <div className="preview-frame">
               <ProjectionPreview state={state} />
             </div>
+            <button
+              className="btn btn-primary preview-apply-btn"
+              onClick={() => {
+                const toApply = state.participants.filter(p => (ratings[p.id] ?? 'noaplica') !== 'noaplica')
+                toApply.forEach(p => {
+                  const pts = RATING_OPTIONS.find(o => o.key === ratings[p.id])!.points
+                  window.electronAPI.updateScore(p.id, pts)
+                })
+                const flashed = new Set<string>()
+                state.participants.forEach(p => {
+                  const pending = pendingScores[p.id] ?? 0
+                  if (pending !== 0) {
+                    window.electronAPI.updateScore(p.id, pending)
+                    flashed.add(p.id)
+                  }
+                })
+                toApply.forEach(p => flashed.add(p.id))
+                if (flashed.size > 0) {
+                  setScoreFlash(prev => {
+                    const next = { ...prev }
+                    flashed.forEach(id => { next[id] = (next[id] ?? 0) + 1 })
+                    return next
+                  })
+                }
+                setPendingScores({})
+                const payload: Record<string, string> = {}
+                toApply.forEach(p => { payload[p.id] = ratings[p.id] })
+                window.electronAPI.showRatings(payload)
+                setRatings({})
+                if (toApply.length > 0) {
+                  setAutoClearStart(Date.now())
+                  setAutoClearNow(Date.now())
+                }
+              }}
+            >
+              Aplicar calificaciones
+            </button>
           </div>
         </div>
       </div>
@@ -982,7 +1514,7 @@ export function ControlApp() {
 
       {/* ── Iniciar misión ── */}
       {missionModal && state && (
-        <div className="obj-modal-overlay" onClick={() => { setMissionModal(false); setAllPlay(false) }}>
+        <div className="obj-modal-overlay" onClick={() => { setMissionModal(false); setAllPlay(false); setUsePreload(false) }}>
           <div className="obj-modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
             <div className="obj-modal-header">
               <span className="obj-modal-title">Iniciar misión</span>
@@ -993,15 +1525,53 @@ export function ControlApp() {
                 {regularMissions.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
               </select>
             </div>
-            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" id="allPlayCheck" checked={allPlay} onChange={e => setAllPlay(e.target.checked)} />
-              <label htmlFor="allPlayCheck" style={{ fontSize: 13, color: '#eee', cursor: 'pointer' }}>Todos juegan</label>
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" id="allPlayCheck" checked={allPlay} disabled={usePreload} onChange={e => setAllPlay(e.target.checked)} />
+                <label htmlFor="allPlayCheck" style={{ fontSize: 13, color: usePreload ? '#6b7280' : '#eee', cursor: usePreload ? 'not-allowed' : 'pointer' }}>Todos juegan</label>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  id="usePreloadCheck"
+                  checked={usePreload}
+                  disabled={!state.missionPreloads?.[missionName]}
+                  onChange={e => setUsePreload(e.target.checked)}
+                />
+                <label htmlFor="usePreloadCheck" style={{ fontSize: 13, color: state.missionPreloads?.[missionName] ? '#eee' : '#6b7280', cursor: state.missionPreloads?.[missionName] ? 'pointer' : 'not-allowed' }}>
+                  Usar precargados
+                </label>
+              </div>
             </div>
-            {!allPlay && (
+            {usePreload && activePreload && (
+              <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 4 }}>
+                <div style={{ fontSize: 12, color: '#f97316', fontWeight: 700, marginBottom: 6 }}>Precargado</div>
+                {activePreload.allPlay ? (
+                  <div style={{ fontSize: 12, color: '#eee' }}>Todos juegan</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {state.participants.slice(0, state.visibleParticipants).map(p => {
+                      const team = activePreload.assignments[p.id] ?? 'none'
+                      const label = team === 'impro' ? 'Equipo A' : team === 'sible' ? 'Equipo B' : 'No participa'
+                      const color = team === 'impro' ? '#f97316' : team === 'sible' ? '#3b82f6' : '#6b7280'
+                      return (
+                        <div key={p.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#eee' }}>{p.name}{p.eliminated ? ' (eliminado)' : ''}</span>
+                          <span style={{ color, fontWeight: 700 }}>{label}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {!allPlay && !usePreload && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {state.participants.slice(0, state.visibleParticipants).filter(p => !p.eliminated).map(p => (
-                  <div key={p.id} className="field-row">
-                    <span className="field-label" style={{ width: 120, fontSize: 13, color: '#eee' }}>{p.name}</span>
+                {state.participants.slice(0, state.visibleParticipants).map(p => (
+                  <div key={p.id} className="field-row" style={{ opacity: p.eliminated ? 0.55 : 1 }}>
+                    <span className="field-label" style={{ width: 120, fontSize: 13, color: '#eee' }}>
+                      {p.name}{p.eliminated ? ' (eliminado)' : ''}
+                    </span>
                     <select
                       className="field-input"
                       value={missionAssignments[p.id] ?? 'none'}
@@ -1021,19 +1591,109 @@ export function ControlApp() {
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-              <button className="btn btn-ghost" onClick={() => { setMissionModal(false); setAllPlay(false) }}>Cancelar</button>
+              <button className="btn btn-ghost" onClick={() => { setMissionModal(false); setAllPlay(false); setUsePreload(false) }}>Cancelar</button>
               <button
                 className="btn btn-primary"
                 disabled={!missionCanStart}
                 onClick={() => {
-                  const teamImpro = allPlay ? [] : state.participants.filter(p => missionAssignments[p.id] === 'impro').map(p => p.id)
-                  const teamSible = allPlay ? [] : state.participants.filter(p => missionAssignments[p.id] === 'sible').map(p => p.id)
-                  window.electronAPI.updateAppState({ missionView: { active: true, name: missionName, teamImpro, teamSible, allPlay } })
+                  const teamImpro = effectiveAllPlay ? [] : state.participants.filter(p => effectiveAssignments[p.id] === 'impro').map(p => p.id)
+                  const teamSible = effectiveAllPlay ? [] : state.participants.filter(p => effectiveAssignments[p.id] === 'sible').map(p => p.id)
+                  window.electronAPI.updateAppState({ missionView: { active: true, name: missionName, teamImpro, teamSible, allPlay: effectiveAllPlay } })
                   setMissionModal(false)
+                  setUsePreload(false)
                 }}
               >
                 Iniciar misión
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Precargar agentes ── */}
+      {preloadModal && state && (
+        <div className="obj-modal-overlay" onClick={() => setPreloadModal(false)}>
+          <div className="obj-modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
+            <div className="obj-modal-header">
+              <span className="obj-modal-title">Precargar agentes</span>
+            </div>
+            <div className="field-row">
+              <span className="field-label">Misión</span>
+              <select
+                className="field-input"
+                value={preloadMissionName}
+                onChange={e => {
+                  const name = e.target.value
+                  const existing = state.missionPreloads?.[name]
+                  setPreloadMissionName(name)
+                  setPreloadAllPlay(existing?.allPlay ?? false)
+                  setPreloadAssignments(existing?.assignments ?? {})
+                }}
+              >
+                {regularMissions.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" id="preloadAllPlayCheck" checked={preloadAllPlay} onChange={e => setPreloadAllPlay(e.target.checked)} />
+              <label htmlFor="preloadAllPlayCheck" style={{ fontSize: 13, color: '#eee', cursor: 'pointer' }}>Todos juegan</label>
+            </div>
+            {!preloadAllPlay && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {state.participants.slice(0, state.visibleParticipants).map(p => (
+                  <div key={p.id} className="field-row" style={{ opacity: p.eliminated ? 0.55 : 1 }}>
+                    <span className="field-label" style={{ width: 120, fontSize: 13, color: '#eee' }}>
+                      {p.name}{p.eliminated ? ' (eliminado)' : ''}
+                    </span>
+                    <select
+                      className="field-input"
+                      value={preloadAssignments[p.id] ?? 'none'}
+                      onChange={e => setPreloadAssignments(prev => ({ ...prev, [p.id]: e.target.value as 'impro' | 'sible' | 'none' }))}
+                    >
+                      <option value="none">No participa</option>
+                      <option value="impro">Equipo A</option>
+                      <option value="sible">Equipo B</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+            {state.missionPreloads?.[preloadMissionName] && (
+              <div style={{ marginTop: 12, fontSize: 11, color: '#6b7280' }}>
+                Esta misión ya tiene una precarga guardada; al guardar se sobrescribe.
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'space-between' }}>
+              <button
+                className="btn btn-danger"
+                disabled={!state.missionPreloads?.[preloadMissionName]}
+                onClick={() => {
+                  const next = { ...(state.missionPreloads ?? {}) }
+                  delete next[preloadMissionName]
+                  window.electronAPI.updateAppState({ missionPreloads: next })
+                  setPreloadModal(false)
+                }}
+              >
+                Eliminar
+              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => setPreloadModal(false)}>Cancelar</button>
+                <button
+                  className="btn btn-primary"
+                  disabled={!preloadMissionName || (!preloadAllPlay &&
+                    !(state.participants.some(p => (preloadAssignments[p.id] ?? 'none') === 'impro') &&
+                      state.participants.some(p => (preloadAssignments[p.id] ?? 'none') === 'sible')))}
+                  onClick={() => {
+                    const next = {
+                      ...(state.missionPreloads ?? {}),
+                      [preloadMissionName]: { allPlay: preloadAllPlay, assignments: preloadAssignments },
+                    }
+                    window.electronAPI.updateAppState({ missionPreloads: next })
+                    setPreloadModal(false)
+                  }}
+                >
+                  Guardar
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1246,6 +1906,7 @@ export function ControlApp() {
               <button className="btn btn-ghost" onClick={() => setPlayCinematicConfirm(null)}>Cancelar</button>
               <button className="btn btn-primary" onClick={() => {
                 window.electronAPI.updateAppState({ activeCinematic: playCinematicConfirm.videoPath, activeCinematicName: playCinematicConfirm.name, curtain: false })
+                setExecutedCinematics(prev => new Set(prev).add(playCinematicConfirm.name))
                 setPlayCinematicConfirm(null)
               }}>Reproducir</button>
             </div>
@@ -1276,6 +1937,7 @@ export function ControlApp() {
                     activeCinematicAudioName: name,
                   })
                 }
+                setExecutedCinematicAudios(prev => new Set(prev).add(name))
                 setPlayCinematicAudioConfirm(null)
               }}>Reproducir</button>
             </div>

@@ -43,9 +43,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeAllListeners('rating:clear')
   },
 
-  startRoulette: (winnerIndex: number, challenges: string[]) => ipcRenderer.send('roulette:start', { winnerIndex, challenges }),
-  onRouletteStart: (cb: (winnerIndex: number, challenges: string[]) => void) => {
-    ipcRenderer.on('roulette:start', (_e, { winnerIndex, challenges }) => cb(winnerIndex, challenges))
+  startRoulette: (winnerIndex: number, challenges: string[], skipAnimation?: boolean) => ipcRenderer.send('roulette:start', { winnerIndex, challenges, skipAnimation: !!skipAnimation }),
+  onRouletteStart: (cb: (winnerIndex: number, challenges: string[], skipAnimation: boolean) => void) => {
+    ipcRenderer.on('roulette:start', (_e, { winnerIndex, challenges, skipAnimation }) => cb(winnerIndex, challenges, !!skipAnimation))
     return () => ipcRenderer.removeAllListeners('roulette:start')
   },
 
@@ -68,5 +68,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveCinematicAudios: (audios: CinematicAudioData[]): Promise<void> => ipcRenderer.invoke('data:save-cinematic-audios', audios),
   selectAudio: (): Promise<string | null> => ipcRenderer.invoke('file:select-audio'),
   selectVideo: (): Promise<string | null> => ipcRenderer.invoke('file:select-video'),
+  deleteFile: (storedPath: string | null): Promise<boolean> => ipcRenderer.invoke('file:delete', storedPath),
   closeProjection: () => ipcRenderer.send('window:close-projection'),
+
+  startImprosible: (finalistIds: [string, string]) => ipcRenderer.send('improsible:start', { finalistIds }),
+  onImprosibleStart: (cb: (finalistIds: [string, string], audioPath: string | null) => void) => {
+    ipcRenderer.on('improsible:start', (_e, { finalistIds, audioPath }) => cb(finalistIds, audioPath ?? null))
+    return () => ipcRenderer.removeAllListeners('improsible:start')
+  },
+  clearImprosible: () => ipcRenderer.send('improsible:clear'),
+  onImprosibleClear: (cb: () => void) => {
+    ipcRenderer.on('improsible:clear', () => cb())
+    return () => ipcRenderer.removeAllListeners('improsible:clear')
+  },
+
+  startImprosibleFinal: (winnerId: string) => ipcRenderer.send('improsible:final-start', { winnerId }),
+  onImprosibleFinalStart: (cb: (winnerId: string) => void) => {
+    ipcRenderer.on('improsible:final-start', (_e, { winnerId }) => cb(winnerId))
+    return () => ipcRenderer.removeAllListeners('improsible:final-start')
+  },
 })

@@ -20,8 +20,8 @@ declare global {
     clearRatings: () => void
     onShowRatings: (cb: (ratings: Record<string, string>) => void) => () => void
     onClearRatings: (cb: () => void) => () => void
-    startRoulette: (winnerIndex: number, challenges: string[]) => void
-    onRouletteStart: (cb: (winnerIndex: number, challenges: string[]) => void) => () => void
+    startRoulette: (winnerIndex: number, challenges: string[], skipAnimation?: boolean) => void
+    onRouletteStart: (cb: (winnerIndex: number, challenges: string[], skipAnimation: boolean) => void) => () => void
     getMissions: () => Promise<MissionData[]>
     saveMissions: (missions: MissionData[]) => Promise<void>
     addMission: (mission: MissionData) => Promise<void>
@@ -45,7 +45,14 @@ declare global {
     saveCinematicAudios: (audios: CinematicAudioData[]) => Promise<void>
     selectAudio: () => Promise<string | null>
     selectVideo: () => Promise<string | null>
+    deleteFile: (storedPath: string | null) => Promise<boolean>
     closeProjection: () => void
+    startImprosible: (finalistIds: [string, string]) => void
+    onImprosibleStart: (cb: (finalistIds: [string, string], audioPath: string | null) => void) => () => void
+    clearImprosible: () => void
+    onImprosibleClear: (cb: () => void) => () => void
+    startImprosibleFinal: (winnerId: string) => void
+    onImprosibleFinalStart: (cb: (winnerId: string) => void) => () => void
   }
 }
 }
